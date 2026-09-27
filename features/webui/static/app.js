@@ -1483,7 +1483,8 @@ function syncCreateModels() {
   const b = backendsCache || {};
   const spec = (b.backends || []).find((x) => x.name === $('c-backend').value) || {};
   const sel = $('c-model');
-  sel.innerHTML = '<option value="">default</option>' + (spec.models || []).map((m) =>
+  const dflt = spec.default_model ? 'default · ' + esc(spec.default_model) : 'default';
+  sel.innerHTML = '<option value="">' + dflt + '</option>' + (spec.models || []).map((m) =>
     '<option value="' + esc(m[0]) + '">' + esc(m[0]) + (m[1] && m[1] !== m[0] ? ' · ' + esc(m[1]) : '') + '</option>').join('');
 }
 

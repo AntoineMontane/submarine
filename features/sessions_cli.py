@@ -429,7 +429,11 @@ def cmd_backends(args) -> int:
         print(json.dumps(body, indent=2))
         return 0
     for b in body.get("backends") or []:
-        models = ", ".join(m[0] for m in (b.get("models") or []) if m)
+        default_model = b.get("default_model")
+        models = ", ".join(("%s (default)" % m[0]) if m[0] == default_model else m[0]
+                           for m in (b.get("models") or []) if m)
+        if default_model and default_model not in [m[0] for m in (b.get("models") or []) if m]:
+            models = "%s (default), %s" % (default_model, models) if models else "%s (default)" % default_model
         print("%-10s %-22s %s%s" % (b.get("name"), b.get("label") or "",
                                     "" if b.get("available", True) else "(unavailable) ",
                                     models))

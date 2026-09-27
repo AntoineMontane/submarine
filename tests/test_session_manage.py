@@ -98,7 +98,36 @@ class TestCreateAndBackends(_SingleViewCase):
         for b in body["backends"]:
             self.assertIn("available", b)
             self.assertIsInstance(b["models"], list)
+            self.assertIn("default_model", b)
+        grok = [b for b in body["backends"] if b["name"] == "grok"][0]
+        self.assertTrue(grok["default_model"], "a new grok session's model is named")
         self.assertIn("windows", body)
+
+    def test_the_default_model_follows_the_user_setting(self):
+        from backend.specs import default_model_for, get
+        self.assertEqual(default_model_for("grok", {}), get("grok").fallback_model)
+        self.assertEqual(default_model_for("grok", {"default_models": {"grok": "grok-4.6"}}),
+                         "grok-4.6")
+        self.assertEqual(default_model_for("claude", {"default_models": {}}),
+                         get("claude").fallback_model or "")
+
+    def test_the_cli_marks_the_default_model(self):
+        import io
+        from contextlib import redirect_stdout
+        import features.sessions_cli as cli
+        body = {"backends": [{"name": "grok", "label": "Grok", "available": True,
+                              "default_model": "grok-4.7",
+                              "models": [["grok-4.7", "Grok 4.7"], ["grok-4.6", "Grok 4.6"]]}],
+                "windows": [], "default": "grok"}
+        saved = cli.call
+        cli.call = lambda *a, **k: {"ok": True, "data": body}
+        try:
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                cli.cmd_backends(type("A", (), {"timeout": 1, "socket": "", "json": False})())
+        finally:
+            cli.call = saved
+        self.assertIn("grok-4.7 (default), grok-4.6", buf.getvalue())
 
     def test_create_uses_the_factory_and_names_the_session(self):
         import ui.session_api as api

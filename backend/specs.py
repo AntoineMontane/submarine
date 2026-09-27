@@ -240,6 +240,24 @@ def abbrev_for(name: str, settings: Optional[dict] = None) -> str:
     return BACKEND_ABBREV.get(b) or b[:2].upper()
 
 
+def default_model_for(name: str, settings: Optional[dict] = None,
+                      spec: Optional[BackendSpec] = None) -> str:
+    """The model a new session on `name` starts with when none is asked for:
+    the user's `default_models[name]`, else the backend's fallback, else the
+    global `default_model`."""
+    settings = settings or {}
+    if spec is None:
+        try:
+            spec = get(name, settings)
+        except Exception:
+            spec = None
+    return str(
+        (settings.get("default_models") or {}).get(name)
+        or (getattr(spec, "fallback_model", None) if spec else None)
+        or settings.get("default_model")
+        or "")
+
+
 def is_available(name: str, settings: Optional[dict] = None) -> bool:
     """True if the backend can currently be used (defaults to True if no checker)."""
     spec = all_backends(settings).get(name)

@@ -544,12 +544,10 @@ class Session:
 
         spec = self._spec()
         env = dict(self.settings.get("env") or {})
-        default_models = self.settings.get("default_models") or {}
-        default_model = (
-            default_models.get(self.backend)
-            or (getattr(spec, "fallback_model", None) if spec else None)
-            or self.settings.get("default_model")
-        )
+        default_model = None
+        if backend_specs is not None:
+            default_model = backend_specs.default_model_for(
+                self.backend, self.settings, spec) or None
         saved_entry = None
         if self.resume_id:
             saved_entry = self.store.find(self.resume_id)

@@ -1036,7 +1036,7 @@ def action_backends(params: dict) -> dict:
     except Exception:
         settings = None
     try:
-        from backend.specs import all_backends, is_available
+        from backend.specs import all_backends, default_model_for, is_available
         for name, spec in all_backends(settings).items():
             try:
                 avail = bool(is_available(name, settings))
@@ -1047,6 +1047,7 @@ def action_backends(params: dict) -> dict:
                 "label": spec.label or name,
                 "available": avail,
                 "pinned": bool(getattr(spec, "pinned", True)),
+                "default_model": default_model_for(name, settings, spec) or None,
                 "models": [list(m) for m in (spec.default_models or [])],
             })
     except Exception as e:

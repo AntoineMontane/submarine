@@ -954,19 +954,22 @@ class MCPSocketServer:
 
     def _list_backends(self) -> dict:
         try:
-            from backend.specs import BACKENDS, all_backends
+            from backend.specs import BACKENDS, all_backends, default_model_for
         except ImportError:
             return {"error": "backend.specs is not available"}
         default = "claude"
+        conf = {}
         try:
             settings = sublime.load_settings("Submarine.sublime-settings")
             default = settings.get("default_backend", "claude") or "claude"
+            conf = {k: settings.get(k) for k in ("providers", "default_models", "default_model")}
         except Exception:
             pass
         rows = []  # type: List[dict]
         summary = ["Backends (● available, ○ not):"]
-        for name, spec in all_backends().items():
+        for name, spec in all_backends(conf).items():
             avail = spec.available is None or bool(spec.available())
+            dmodel = default_model_for(name, conf, spec) or None
             kind = "builtin" if name in BACKENDS else "custom"
             rows.append({
                 "name": name,
@@ -976,13 +979,15 @@ class MCPSocketServer:
                 "pinned": spec.pinned,
                 "bridge": spec.bridge_script,
                 "fallback_model": spec.fallback_model,
+                "default_model": dmodel,
                 "effort": spec.effort,
                 "models": [[mid, mlabel] for mid, mlabel in spec.default_models],
             })
             mark = "●" if avail else "○"
             pin = " 📌" if spec.pinned else ""
-            summary.append("  %s %s → %s%s  [%s, bridge=%s]" % (
-                mark, name, spec.label or name, pin, kind, spec.bridge_script))
+            summary.append("  %s %s → %s%s  [%s, default model %s, bridge=%s]" % (
+                mark, name, spec.label or name, pin, kind, dmodel or "?",
+                spec.bridge_script))
         summary.append("")
         summary.append("default backend: %s" % default)
         summary.append(
