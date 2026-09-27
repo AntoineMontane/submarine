@@ -1,40 +1,38 @@
 # Submarine web UI — manual
 
-A browser front end for the same session-control socket `submarine_sessions`
-uses: list the sessions a running Sublime is holding, read a transcript, send a
-prompt, cancel the current turn. Start it where the CLI runs and open
-`http://<host>:8787/`.
-
-```
-python3 submarine_web.py [--host 0.0.0.0] [--port 8787] [--token S]
-python3 -m features.webui [same options]
-```
+A browser front end for the sessions a running Sublime is holding: list them,
+read a sheet or a transcript, send a prompt, answer a question, cancel a turn.
+The plugin serves it itself, from inside Sublime's Python — open
+`http://127.0.0.1:8787/` on this machine, `http://<this-machine>:8787/` from
+another device (after granting it, §3). Nothing to start.
 
 ---
 
 ## 1. What it shares with the CLI
 
-Nothing is re-implemented for the browser. The UI is a **second client of the
-same socket**, exactly like the CLI:
+Nothing is re-implemented for the browser. Every route is one of the
+session-control actions the CLI uses (`features/session_control.py`,
+`op:"sessions"`); only the way the request reaches them differs:
 
-| Layer | Where it lives | Shared? |
+| Layer | Where it lives | Notes |
 |---|---|---|
-| Socket transport | `features/sessions_cli.py` (`send`, `call`) | yes — imported by the UI |
-| Actions | `features/session_control.py` (`op:"sessions"`) | yes — every button is one of its four actions |
-| Server side | `mcp/socket_server.py` routes the op on the plugin's main thread | unchanged |
-| Web layer | `features/webui/` (this feature) | new, HTTP only |
+| Actions | `features/session_control.py` (`dispatch`) | shared by the CLI, the web UI and agents |
+| In-process web server | `features/webui/hosted.py` | HTTP accept loop on a daemon thread; each action is handed to the editor's main thread (`sublime.set_timeout`) and answered there — no socket |
+| HTTP layer | `features/webui/server.py` | routes, status mapping, access gate |
+| Standalone (optional) | `submarine_web.py` → `features/webui/client.py` | the same server outside Sublime, reaching the actions over the plugin socket like `submarine_sessions` |
 
 So there is no second sessions stack and no path that bypasses the plugin: what
 the UI can do, the CLI can do, and both see the same registry, store and
 transcript files. Consequences worth knowing:
 
-- **Sublime must be running with Submarine loaded.** The UI does not spawn,
-  resume or fork anything by itself; the socket has to be up.
+- **Sublime must be running with Submarine loaded** — the server lives in the
+  plugin and stops with it (a plugin reload restarts it). The UI does not
+  spawn, resume or fork anything outside the actions.
 - **`REF` semantics are the CLI's**: an agent id, a session id, or a unique
   session name. Ids win; a name that matches several sessions is refused
   (`ambiguous`) rather than guessed.
 - **The UI never evaluates code.** It only uses `op:"sessions"`, not the
-  `{"code": …}` namespace that shares the socket.
+  `{"code": …}` eval namespace the plugin socket also serves.
 
 The caller stamp is `{"kind": "webui", "name": "web UI"}`, so the plugin's audit
 log names the surface that acted; the target sheet's prompt line only carries
@@ -113,11 +111,12 @@ The API is the CLI with HTTP framing: one action per route, the plugin's JSON
 envelope passed through with an `http` field added, and the status taken from
 the envelope's `data.code` (`bad_request` 400, `not_found` 404, `ambiguous` /
 `busy` / `no_view` / `no_session` 409, `transcript` / `internal` 500, anything
-without a code — the socket is missing — 503).
+without a code — Sublime did not answer in time, or, standalone, the socket is
+missing — 503).
 
 | Route | Action | Arguments |
 |---|---|---|
-| `GET /api/health` | — | none; reports the socket path and whether it exists |
+| `GET /api/health` | — | none; in-process it reports `"socket": "in-process"`, standalone the socket path and whether it exists |
 | `GET /api/list` | `list` | `scope` (`all` \| `window` \| `children`), `parent`, `window` |
 | `GET /api/view` | `view` | `ref` (required), `mode` (`tail` \| `text` \| `edits`), `turns`, `max_chars`, `offset`, `limit`, `file_path` |
 | `POST /api/chat` | `chat` | `{"ref", "prompt", "queue", "idem", "display"}` |
@@ -292,14 +291,14 @@ drops *Fold all* / *Unfold* and the source label; the Sheet tab shows `·T`
 when it is really the transcript.
 
 Everything above 760px is untouched: same two-pane layout, same Enter-to-send,
-same header. The socket, the API and the polling described here are identical
-on both.
+same header. The API and the polling described here are identical on both.
 
 ### Why it polls instead of streaming
 
-The plugin socket is one request and one reply per connection, with no push
-channel — the CLI's `chat --wait` is already "send, then ask again". The console
-does the same thing on a timer: `/api/list` every 5s, plus `/api/view` every
+The session actions are one request and one reply, with no push channel — the
+CLI's `chat --wait` is already "send, then ask again". The console does the
+same thing on a timer (each call runs on Sublime's main thread, so it stays
+light): `/api/list` every 5s, plus `/api/view` every
 1.5s
 **while the selected session is working**, and it backs off to idle polling as
 soon as the turn ends. So a long reply appears in Transcript once the backend
@@ -320,9 +319,11 @@ retried; it never claims a delivery that did not happen.
 ```
 features/webui/
 ├── __init__.py      exports for the package
-├── client.py        op:"sessions" over features/sessions_cli's transport
-├── server.py        ThreadingHTTPServer: routes, status mapping, token gate
-├── cli.py           argument parsing + startup banner
+├── hosted.py        the in-process server: start/stop with the plugin, settings,
+│                    actions answered on the editor's main thread
+├── client.py        op:"sessions" over the plugin socket (standalone mode)
+├── server.py        ThreadingHTTPServer: routes, status mapping, access gate
+├── cli.py           standalone argument parsing + startup banner
 ├── __main__.py      `python3 -m features.webui`
 └── static/
     ├── index.html   the console + the CodeMirror import map
@@ -333,7 +334,11 @@ features/webui/
     ├── highlight.js the sheet tokenizer (port of SubmarineOutput.sublime-syntax)
     ├── editor.js    CodeMirror sheet + composer (ES module; optional at runtime)
     └── style.css    layout, phone rules, the tmTheme scopes as classes
-submarine_web.py     shim: `python3 submarine_web.py`
+features/web_access.py        per-device grants: requests, sha256'd tokens, revoke
+commands/web_access_cmds.py   "Submarine: Web Access…" (grant / deny / revoke)
+submarine_web.py     standalone shim: `python3 submarine_web.py`
 tests/test_webui.py            the HTTP layer against a fake client (no Sublime needed)
+tests/test_webui_hosted.py     the in-process server (start/stop, main-thread dispatch)
+tests/test_web_access.py       grants, tokens, revoke, request caps
 tests/test_webui_highlight.py  the tokenizer under node (skipped without node)
 ```
