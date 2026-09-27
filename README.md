@@ -107,20 +107,62 @@ socket (`op:"sessions"`) — no second stack:
 ```bash
 submarine_sessions list | view | chat | interrupt | pending | answer
 submarine_sessions create | rename | close | backends
-submarine_web.py                                     # browser console, 0.0.0.0:8787
 ```
 
-The web console is the same actions over HTTP: the Sublime session list
-(current above history, by window, ↳ children, `?` waiting first), the sheet
-drawn as Sublime draws it (CodeMirror, folds per turn, search), question /
-permission / plan cards you can answer, edits with diffs and a code view,
-new / rename / close. A prompt sent from outside shows as `◎ 📨 …` on the
-sheet. Phone layout included. CodeMirror loads from esm.sh; offline the
-console degrades to a `<pre>` and a textarea.
+**Usage doc:** [docs/session-control.md](docs/session-control.md).
 
-**Usage docs:** [docs/session-control.md](docs/session-control.md) (CLI) and
-[docs/web-ui.md](docs/web-ui.md) (browser console, `--host` / `--port` /
-`--token`, remote access).
+### Web UI
+
+The same sessions in a browser — on this machine, or a phone or tablet on
+your network. The plugin serves it itself: open **http://127.0.0.1:8787/**
+here, or `http://<this-machine>:8787/` from another device. Nothing else to
+run; it starts and stops with the plugin.
+
+```jsonc
+// Submarine.sublime-settings
+"web_host": "0.0.0.0",   // every interface; "127.0.0.1" keeps it to this machine
+"web_port": 8787,        // 0 turns the web UI off
+```
+
+**Access.** This machine is let in without asking (unless
+`web_require_auth_on_loopback` is set). Any other device first sees an
+access screen: name it, tap **Request access**, then grant it in Sublime with
+**Submarine: Web Access…** — the same palette entry denies a request or
+revokes a device later. The device keeps its token in an HttpOnly cookie;
+only its sha256 is stored. The older shared secret (`web_token`, sent as
+`X-Submarine-Token` or `?token=`) still works.
+
+A granted device can read your sessions and **prompt your agents** — arbitrary
+work on this machine. There is no TLS: use it on a network you trust, over a
+VPN, or through an SSH tunnel (`ssh -L 8787:127.0.0.1:8787 <machine>`); never
+port-forward it to the internet.
+
+**What it does.**
+
+- **Sessions** — current above history, grouped by window, ↳ children,
+  the same state marks as the Sublime list.
+- **Sheet** — drawn as Sublime draws it (CodeMirror: highlighting, a fold per
+  turn, search). A session that is not on screen in Sublime is rebuilt from
+  its transcript, text and tool calls in the order they ran.
+- **Transcript** and **Edits** tabs — the last turns from disk; every file the
+  session changed, with its diff, a code view at the edited line, and ↗ to
+  open it in Sublime.
+- **Answer** questions, permissions and plan approvals as cards.
+- **Prompt, queue, interrupt**; a prompt from the web shows as `◎ 📨 …`.
+- **New session** (backend and model — the default is named), **rename**,
+  **close**, **clear** (Cmd+K; Shift-click wipes), **A− / A+** text size.
+
+**On a phone.** The session view fills the screen and the list is a drawer:
+☰ or a right flick on the Sheet tab pulls it out, a left flick puts it back.
+Flick left and right to move between Sheet, Transcript and Edits. Add it to
+the Home Screen for a full-screen app.
+
+CodeMirror loads from esm.sh; offline the page falls back to plain text and a
+text box. The standalone `submarine_web.py` still runs the same server
+outside Sublime (`--host`, `--port`, `--token`).
+
+**Manual:** [docs/web-ui.md](docs/web-ui.md) (HTTP API, security, the
+console in detail).
 
 ## Usage
 

@@ -42,71 +42,70 @@ the mark (`◎ 📨 <prompt> ▶`).
 
 ## 2. Run it
 
-The CLI is a script in the plugin tree and so is this one:
+The plugin serves the web UI itself, in-process: a daemon thread accepts
+connections, and each API call runs on the editor's main thread (the same
+hop the plugin socket makes). It starts and stops with the plugin; there is
+no second process.
+
+```jsonc
+// Submarine.sublime-settings
+"web_host": "0.0.0.0",                  // bind address; "127.0.0.1" = this machine only
+"web_port": 8787,                       // 0 = off
+"web_token": "",                        // legacy shared secret (optional)
+"web_require_auth_on_loopback": false,  // true = this machine must be granted too
+```
+
+Open `http://127.0.0.1:8787/` here, `http://<this-machine>:8787/` elsewhere.
+
+The standalone script still exists for running the server outside Sublime
+(it talks to the plugin socket like the CLI does):
 
 ```bash
-python3 /path/to/submarine/submarine_web.py
-```
-
-Optional symlink, next to the other project CLIs:
-
-```bash
-ln -s /path/to/submarine/submarine_web.py ~/.local/bin/submarine_web
-```
-
-The shim resolves its own symlink, so it works from any directory. Any
-Python 3.8+ runs it — the same floor as the plugin's own test suite.
-
-Startup banner:
-
-```
-Submarine web UI
-  local     http://127.0.0.1:8787/
-  all       http://0.0.0.0:8787/  (bound to every interface)
-  reachable http://192.168.1.20:8787/
-  socket    /var/folders/…/T/submarine_mcp.sock
-  token     off — anyone who can reach this port can read and prompt your sessions
-Ctrl-C to stop.
+python3 /path/to/submarine/submarine_web.py [--host 0.0.0.0] [--port 8787] [--token S]
 ```
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--host` | `0.0.0.0` | bind address — every interface, so a browser on another machine can reach it |
+| `--host` | `0.0.0.0` | bind address |
 | `--port` | `8787` | TCP port (`--port 0` picks a free one) |
 | `--socket` | `$TMPDIR/submarine_mcp.sock` | plugin socket path override |
-| `--token` | `$SUBMARINE_WEB_TOKEN` | shared secret for every `/api` route |
+| `--token` | `$SUBMARINE_WEB_TOKEN` | legacy shared secret for every `/api` route |
 | `--quiet` | off | no banner |
-| `--verbose` | off | log every request; by default only failures are logged, because the console polls |
+| `--verbose` | off | log every request (by default only failures — the console polls) |
 
 ## 3. Security
 
-Binding `0.0.0.0` means **anyone who can reach the port can list your sessions,
-read their transcripts, and prompt them** — a prompt is arbitrary work on your
-machine, run with your agent's permissions. Two things matter:
+Anyone let in can list your sessions, read their transcripts, and **prompt
+them** — a prompt is arbitrary work on your machine, run with your agent's
+permissions.
 
-- Use `--token secret` when the machine is on a shared network. Every `/api`
-  route then needs the token, as `X-Submarine-Token: secret` (what the page
-  sends) or `?token=secret` (handy for a shared link — the page remembers it in
-  `localStorage` and drops it from the URL). The static files themselves are not
-  gated: the page holds no data, only the API calls do. Without a token, the
-  banner says so.
-- Otherwise bind the loopback interface explicitly (`--host 127.0.0.1`) and use
-  an SSH tunnel from wherever you want to browse.
+**Per-device grants.** A browser without access sees an access screen: it
+names itself and requests access. The request (name, address, user agent)
+waits in Sublime; **Submarine: Web Access…** grants or denies it, and lists
+granted devices to revoke. A granted browser keeps its token in an HttpOnly,
+SameSite=Strict cookie; the plugin stores only the token's sha256, in
+`~/.submarine/web_access.json`. A revoke takes effect within seconds. Pending requests
+are capped, per address and in total, so a host on the network cannot flood
+the list.
 
-There is no TLS: the token travels in clear text on the wire. Treat it as a
-LAN-only convenience, not as authentication over the internet.
+**This machine** (loopback) is let in without a grant, so a local browser
+never locks you out; set `web_require_auth_on_loopback` to require one here
+too.
+
+**Shared secret (legacy).** `web_token` / `--token` still works: every
+`/api` route accepts `X-Submarine-Token: <secret>` or `?token=<secret>` (the
+page remembers it and drops it from the URL).
+
+There is no TLS: cookies and tokens travel in clear text. Keep it to a
+network you trust.
 
 ### From outside the LAN
 
 Reach it over a private network you already trust — a VPN or overlay, or an
-SSH tunnel — never the open internet. Bind to that network's address with a
-token (`--host <private-address> --token <secret>`), open
-`http://<private-address>:8787/?token=<secret>` once (the page keeps the
-token and drops it from the URL), add to Home Screen. An SSH tunnel is the
-same with `--host 127.0.0.1` and `ssh -L 8787:127.0.0.1:8787 <machine>`.
-Do not port-forward the router to it, and a public tunnel (Cloudflare,
-ngrok) needs real authentication in front — the shared token alone is not
-enough for an internet-facing port.
+SSH tunnel (`ssh -L 8787:127.0.0.1:8787 <machine>`, which also counts as
+loopback on the far side) — never the open internet. Do not port-forward the
+router to it; a public tunnel (Cloudflare, ngrok) needs real authentication
+in front.
 
 ## 4. HTTP API
 
