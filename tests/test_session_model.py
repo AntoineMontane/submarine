@@ -238,22 +238,166 @@ if __name__ == "__main__":
 
 
 class ProviderLineTest(unittest.TestCase):
-    """A fresh sheet says what it runs on before the first prompt."""
+    def test_the_banner_reads_like_done(self):
+        from ui.render_policy import identity_parts
+        self.assertEqual(identity_parts("Grok", "grok-4.6", "high"), ["Grok/grok-4.6", "effort:high"])
+        self.assertEqual(identity_parts("Claude", "opus", ""), ["opus"])
+        import os
+        syn = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "SubmarineOutput.sublime-syntax"), encoding="utf-8").read()
+        self.assertIn("^\\s*@session\\(.*\\)$", syn)
 
-    def test_new_session_prints_provider_model_and_effort(self):
+    """Every sheet says what it runs on, above its history."""
+
+    def test_new_session_shows_provider_model_and_effort(self):
         from tests.fakes import FakeClient, make_session
         s = make_session(client=FakeClient(), backend="grok",
                          settings={"effort": "high"})
         s.start()
         s._on_init({"status": "initialized", "session_id": "y", "model": "grok-4.7"})
-        self.assertEqual(s.output.texts, ["\n*Grok · Grok 4.7 (grok-4.7) · effort high*\n"])
+        self.assertEqual(s.output.banners, [("Grok", "grok-4.7", "high")])
 
-    def test_a_resumed_session_does_not(self):
+    def test_a_resumed_session_shows_it_too(self):
         from tests.fakes import FakeClient, make_session
         s = make_session(client=FakeClient(), backend="claude", resume_id="old")
         s.start()
         s._on_init({"status": "initialized", "session_id": "old"})
-        self.assertEqual(s.output.texts, [])
+        self.assertTrue(s.output.banners and s.output.banners[-1][0] == "Claude")
+
+    def test_the_banner_is_on_the_sheet_above_the_history(self):
+        """It was output.text() — which drops text while no turn exists, so
+        a fresh sheet showed nothing."""
+        from tests.stubs import install_sublime
+        from tests.test_composer_always_back import _live
+        from tests.test_single_view import RecordingWindow
+        from ui.host import HostView
+        install_sublime()
+        win = RecordingWindow()
+        s, out, _c = _live(win, "fresh")
+        HostView.for_window(win).attach(win, s)
+        s._enter_input_with_draft()
+        out.set_banner(("Claude", "opus", "high"))
+        text = out.view.substr(None)
+        self.assertTrue(text.startswith("  @session(opus, effort:high)\n\n"), text)
+        self.assertTrue(out.composer.is_input_mode())
+        self.assertTrue(text[out.composer._input_start - 2:].startswith("◎ "),
+                        "the composer anchor moved with the banner")
+        out.prompt("hello")
+        out.text("hi there\n")
+        out.meta(0)
+        out.set_banner(("Claude", "sonnet", "high"))   # replaced, not stacked
+        text = out.view.substr(None)
+        self.assertEqual(text.count("@session("), 1)
+        self.assertTrue(text.startswith("  @session(sonnet, effort:high)"))
+        self.assertLess(text.index("@session("), text.index("◎ hello ▶"))
+        out.renderer.repaint_from_state()
+        text = out.view.substr(None)
+        self.assertTrue(text.startswith("  @session(sonnet, effort:high)\n\n◎ hello ▶"), text)
+
+
+class BannerOverHistoryTest(unittest.TestCase):
+    def test_a_banner_added_over_a_live_turn_keeps_its_output_in_place(self):
+        from tests.stubs import install_sublime
+        from tests.test_composer_always_back import _live
+        from tests.test_single_view import RecordingWindow
+        from ui.host import HostView
+        install_sublime()
+        win = RecordingWindow()
+        s, out, _c = _live(win, "resumed")
+        HostView.for_window(win).attach(win, s)
+        out.prompt("earlier question")
+        out.text("first part\n")
+        out.set_banner(("Kimi Code", "kimi-for-coding", ""))
+        out.text("second part\n")
+        text = out.view.substr(None)
+        self.assertTrue(text.startswith("  @session(Kimi Code/kimi-for-coding)\n\n◎ earlier question ▶"), text)
+        self.assertIn("first part\nsecond part", text)
+        self.assertEqual(text.count("◎ earlier question"), 1)
+
+
+class ModelSwitchNoteTest(unittest.TestCase):
+    """Picking a model marks the history where it happened."""
+
+    def _sheet(self):
+        from tests.stubs import install_sublime
+        from tests.test_composer_always_back import _live
+        from tests.test_single_view import RecordingWindow
+        from ui.host import HostView
+        install_sublime()
+        win = RecordingWindow()
+        s, out, _c = _live(win, "switcher")
+        HostView.for_window(win).attach(win, s)
+        s.model = "grok-4.7"
+        return s, out
+
+    def test_the_switch_is_noted_under_the_last_turn(self):
+        s, out = self._sheet()
+        out.prompt("hello")
+        out.text("hi\n")
+        out.meta(0)
+        s.note_model_switch("grok-4.7", "grok-4.6")
+        text = out.view.substr(None)
+        done = text.index("@done")
+        note = text.index("  @model(grok-4.7 → grok-4.6)")
+        self.assertGreater(note, done)
+        out.renderer.repaint_from_state()
+        self.assertIn("  @model(grok-4.7 → grok-4.6)", out.view.substr(None))
+
+    def test_the_picker_notes_it(self):
+        import commands.provider_cmds as pc
+        s, out = self._sheet()
+        out.prompt("hello")
+        out.meta(0)
+        pc._apply_session_model(s, "grok-4.6")
+        self.assertIn("@model(grok-4.7 → grok-4.6)", out.view.substr(None))
+
+    def test_before_any_turn_the_banner_says_it(self):
+        s, out = self._sheet()
+        s.model = "grok-4.6"
+        s.note_model_switch("grok-4.7", "grok-4.6")
+        text = out.view.substr(None)
+        self.assertNotIn("@model(", text)
+        self.assertTrue(text.startswith("  @session("), text)
+        self.assertIn("grok-4.6", text.split("\n", 1)[0])
+
+    def test_no_note_when_nothing_changed(self):
+        s, out = self._sheet()
+        out.prompt("hello")
+        out.meta(0)
+        s.note_model_switch("grok-4.7", "grok-4.7")
+        self.assertNotIn("@model(", out.view.substr(None))
+
+
+class BannerWithContextTest(unittest.TestCase):
+    def _check(self, composer_open):
+        from tests.stubs import install_sublime
+        from tests.test_composer_always_back import _live
+        from tests.test_single_view import RecordingWindow
+        from ui.host import HostView
+        install_sublime()
+        win = RecordingWindow()
+        s, out, _c = _live(win, "fresh")
+        HostView.for_window(win).attach(win, s)
+        c = out.composer
+        if composer_open:
+            s.pending_context = [{"name": "a.py"}]
+            s._enter_input_with_draft()
+        elif c.is_input_mode():
+            c.exit_input_mode(keep_text=False)
+        c.set_pending_context([{"name": "a.py"}])       # 📎 before the banner
+        out.set_banner(("Claude", "opus", "high"))
+        c.set_pending_context([{"name": "a.py"}, {"name": "b.py"}])
+        text = out.view.substr(None)
+        self.assertTrue(text.startswith("  @session(opus, effort:high)\n\n"), repr(text))
+        self.assertEqual(text.count("📎"), 1, repr(text))
+
+    def test_banner_and_context_line_with_the_composer_closed(self):
+        """New session with 📎 context: the banner write left the 📎 line's
+        region unshifted; its next redraw ate `  @s` and wrote a second 📎."""
+        self._check(composer_open=False)
+
+    def test_banner_and_context_line_with_the_composer_open(self):
+        self._check(composer_open=True)
 
 
 class EffortOnResumeTest(unittest.TestCase):

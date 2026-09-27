@@ -991,6 +991,11 @@ class Composer:
                     view.sel().add(sublime.Region(end, end))
             return
         text = "\n%s\n" % CONTEXT_PREFIX
+        # One 📎 line: a second change (another chip before the composer
+        # opens) replaced nothing and appended a second line.
+        old_start, old_end = self._pending_context_region
+        if old_end > old_start and old_end <= view.size():
+            self.owner._replace(old_start, old_end, "")
         start = view.size()
         end = self.owner._write(text)
         self._pending_context_region = (start, end)

@@ -1560,10 +1560,18 @@ class MCPSocketServer:
                 "available_agent_ids": list(_agents_map()),
             }
         aid = getattr(session, "agent_id", None)
-        if not session.output or not session.output.view:
-            return {"error": "Session output view not found", "agent_id": aid}
+        if not session.output:
+            return {"error": "Session has no output", "agent_id": aid}
         view = session.output.view
-        content = view.substr(sublime.Region(0, view.size()))
+        if view is not None and view.is_valid():
+            content = view.substr(sublime.Region(0, view.size()))
+        else:
+            # Not on screen (single mode binds one sheet per window): the
+            # same text a repaint would draw, from the session's state.
+            project = getattr(session.output, "project_text", None)
+            if not callable(project):
+                return {"error": "Session output view not found", "agent_id": aid}
+            content = project()
         if lines:
             all_lines = content.split("\n")
             if len(all_lines) > lines:

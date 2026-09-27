@@ -424,6 +424,8 @@ class Conversation:
     # A turn the runtime started (a finished background task, a scheduled
     # wake): headed `⚙ … ▷`, never `◎ … ▶` — it is not something you said.
     injected: bool = False
+    # One-line events after this turn's @done (a model switch): `⇄ …`.
+    notes: List[str] = field(default_factory=list)
 
     @property
     def tools(self) -> List[ToolCall]:

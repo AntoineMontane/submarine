@@ -697,7 +697,14 @@ class SubmarineSetDefaultEffortCommand(sublime_plugin.WindowCommand):
 
 
 def _apply_session_model(session, real_model):
+    old = getattr(session, "model", None)
     session.model = real_model
+    note = getattr(session, "note_model_switch", None)
+    if callable(note):
+        try:
+            note(old, real_model)
+        except Exception:
+            pass
     try:
         if session.output and session.output.view:
             keys.write_setting(session.output.view.settings(), keys.MODEL, real_model)

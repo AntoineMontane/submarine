@@ -295,6 +295,9 @@ class ModalUI:
                 try:
                     self.owner.sheet.set_hidden_region(
                         keys.PLAN_BLOCK, region[0], region[1])
+                    # Without these a switch back left [Y] [N] [V] dead to
+                    # the mouse (the keys still worked).
+                    self._paint_plan_buttons(plan)
                 except Exception:
                     pass
         q = self.pending_question
@@ -306,6 +309,7 @@ class ModalUI:
                 try:
                     self.owner.sheet.set_hidden_region(
                         keys.QUESTION_BLOCK, region[0], region[1])
+                    self._paint_question_keys(region[0], region[1])
                 except Exception:
                     pass
         self._region_stash = None
@@ -891,18 +895,39 @@ class ModalUI:
         plan.button_regions[PLAN_VIEW] = (btn_start, btn_start + len(btn_v))
         if sublime is None:
             return
+        self._paint_plan_buttons(plan)
+
+    def _paint_plan_buttons(self, plan) -> None:
+        """The clickable, coloured [Y] [N] [V] of a plan approval."""
+        view = self.owner.view
+        if not view or not plan or sublime is None:
+            return
         scope_map = {
             PLAN_APPROVE: "submarine.permission.button.allow",
             PLAN_REJECT: "submarine.permission.button.deny",
             PLAN_VIEW: "submarine.permission.button.allow_session",
         }
-        for btn_type, (bs, be) in plan.button_regions.items():
-            self.owner.view.add_regions(
+        for btn_type, (bs, be) in (plan.button_regions or {}).items():
+            view.add_regions(
                 "%s%s" % (keys.PLAN_BTN_PREFIX, btn_type),
                 [sublime.Region(bs, be)],
                 scope_map.get(btn_type, ""),
                 "", sublime.DRAW_NO_OUTLINE,
             )
+
+    def _paint_question_keys(self, a, b) -> None:
+        """The coloured [1] … [O] [⏎] of a question block at (a, b)."""
+        view = self.owner.view
+        if not view or sublime is None or b <= a:
+            return
+        import re
+        text = view.substr(_R(a, b))
+        regs = [sublime.Region(a + m.start(), a + m.end())
+                for m in re.finditer(r'\[\d+\]|\[O\]|\[⏎\]', text)]
+        if regs:
+            view.add_regions(keys.QUESTION_KEYS, regs,
+                             "submarine.permission.button.allow", "",
+                             sublime.DRAW_NO_OUTLINE)
 
     def clear_plan_approval(self):
         if not self.pending_plan:
@@ -1020,6 +1045,38 @@ class ModalUI:
             lines.append("    [O] Other...\n")
         return "".join(lines)
 
+    def _question_tail(self):
+        """Where the live turn ends: before the question's answer line, or
+        the composer, else the end of the sheet."""
+        view = self.owner.view
+        size = view.size()
+        regs = view.get_regions(keys.QUESTION_INPUT_MARKER)
+        if regs and regs[0].size() > 0:
+            return regs[0].begin()
+        c = self.owner.composer
+        try:
+            if c.is_input_mode() and not c._question_input_mode:
+                peel = c.peel_start()
+                if peel is not None:
+                    return min(size, int(peel))
+        except Exception:
+            pass
+        return size
+
+    def _drop_stale_question_block(self, a, b):
+        """A question block region left above the live turn: forget it, and
+        cut its text when it is an orphaned question block."""
+        view = self.owner.view
+        try:
+            text = view.substr(_R(a, b))
+        except Exception:
+            text = ""
+        view.erase_regions(keys.QUESTION_BLOCK)
+        view.erase_regions(keys.QUESTION_KEYS)
+        if "❓" in text:
+            self.owner._replace(a, b, "")
+            self._unlock_for_composer()
+
     def render_question(self):
         if not self.pending_question or not self._has_view():
             return
@@ -1031,23 +1088,40 @@ class ModalUI:
             return
         view = self.owner.view
         c = self.owner.composer
+        # The question belongs to the live turn, which is always last: a
+        # remembered position counts only if it sits at the sheet's tail. A
+        # stale one (a region restored after a switch, a turn region left on
+        # an older turn) drew the new question under an old @done.
+        tail = self._question_tail()
         old = view.get_regions(keys.QUESTION_BLOCK)
-        if old and old[0].size() > 0:
-            write_at = old[0].begin()
-            self.owner._replace(old[0].begin(), old[0].end(), "")
-        elif q_req.region and q_req.region[1] > q_req.region[0]:
+        if old and old[0].size() > 0 and old[0].end() < tail - 2:
+            self._drop_stale_question_block(old[0].begin(), old[0].end())
+            tail = self._question_tail()
+            old = None
+        q_span = None
+        if q_req.region and q_req.region[1] > q_req.region[0]:
             a, b = q_req.region
             a = max(0, min(a, view.size()))
             b = max(a, min(b, view.size()))
+            if b >= tail - 2:
+                q_span = (a, b)
+        if old and old[0].size() > 0:
+            write_at = old[0].begin()
+            self.owner._replace(old[0].begin(), old[0].end(), "")
+        elif q_span is not None:
+            a, b = q_span
             write_at = a
             if b > a:
                 self.owner._replace(a, b, "")
         else:
             conv = view.get_regions(keys.CONV_REGION)
-            if conv and conv[0].size() > 0:
+            if conv and conv[0].size() > 0 and conv[0].end() >= tail - 2:
                 write_at = conv[0].end()
-            elif self.owner.current and self.owner.current.region:
+            elif (self.owner.current and self.owner.current.region
+                    and self.owner.current.region[1] >= tail - 2):
                 write_at = min(self.owner.current.region[1], view.size())
+            elif conv or (self.owner.current and self.owner.current.region):
+                write_at = tail
             else:
                 write_at = view.size()
         free_text = None

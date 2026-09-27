@@ -33,6 +33,7 @@ from .render_policy import (
     cap_history,
     format_injected_header,
     format_user_prompt_block,
+    identity_parts,
     should_incremental_append,
     tasks_fold_rows,
     text_events_joined,
@@ -75,6 +76,8 @@ class TurnRenderer:
         self._spinner_frame = 0
         self._spinner_frames = SPINNER_FRAMES
         self._retry_hint = None  # type: Optional[str]
+        # What the session runs on, above all of its history (set_banner).
+        self.banner = None  # type: Optional[str]
         self._cleared_content = None  # type: Optional[str]
         self._struct_dirty = False
         self._proj_event_count = 0
@@ -394,7 +397,7 @@ class TurnRenderer:
             self._render_current(auto_scroll=True)
             return
         start = view.size() if view else 0
-        prefix = "\n" if start > 0 else ""
+        prefix = "\n" if start > self._banner_end() else ""
         if injected:
             line = prefix + format_injected_header(text)
         else:
@@ -417,7 +420,7 @@ class TurnRenderer:
 
     def tool(self, name, tool_input=None, tool_id=None, background=False):
         """Open a tool row. Viewless: records ToolCall, no buffer write."""
-        if not self.current:
+        if not self.current and not self._revive_for_output():
             return
         tool_input = tool_input or {}
         if background and not may_background(name):
@@ -598,7 +601,7 @@ class TurnRenderer:
 
     def text(self, content):
         """Append assistant text. Viewless: records events, no buffer write."""
-        if not self.current:
+        if not self.current and not self._revive_for_output():
             return
         if content is None or content == "":
             return
@@ -1106,7 +1109,111 @@ class TurnRenderer:
             # Same line the live turn got — including the provider it ran on
             # (`conv.identity`), so a repaint does not quietly drop it.
             lines.append(self._meta_line(conv))
+        lines.extend(_note_lines(conv))
         return "".join(lines)
+
+    def note(self, text):
+        """A one-line event between turns (a model switch), shown after the
+        latest turn's @done. False when there is no turn yet. Viewless:
+        state only."""
+        text = " ".join(str(text or "").split())
+        if not text:
+            return False
+        target = self.current or (self.conversations[-1] if self.conversations else None)
+        if target is None:
+            return False
+        self._mark_buffer_dirty("note", (text,))
+        target.notes = list(getattr(target, "notes", None) or []) + [text]
+        if target is self.current and self._has_view():
+            self._struct_dirty = True
+            self._render_current()
+        return True
+
+    def _banner_block(self, line=None):
+        # `@session(…)`: the same form (and highlight) as a turn's @done.
+        line = self.banner if line is None else line
+        return "  @session(%s)\n\n" % line if line else ""
+
+    def _banner_end(self):
+        """Offset where history starts: 0, or just past the banner (the
+        first turn there needs no blank line of its own)."""
+        return len(self._banner_block())
+
+    def _shift_below_banner(self, delta):
+        """Everything below the banner moves with it: composer anchors, the
+        pending 📎 line (written before the composer opens on a new session —
+        left unshifted, its next redraw ate `  @s` and wrote a second 📎),
+        and the offsets a pending question / permission / plan keeps."""
+        if not delta:
+            return
+        c = self.owner.composer
+        if c.is_input_mode() or getattr(c, "_question_input_mode", False):
+            c.shift_anchors(delta)          # includes the 📎 region
+        else:
+            pca, pcb = c._pending_context_region
+            if pcb > pca:
+                c._pending_context_region = (pca + delta, pcb + delta)
+        m = self.owner.modals
+        for obj in (m.pending_question, m.pending_permission, m.pending_plan):
+            if obj is None:
+                continue
+            if getattr(obj, "region", None):
+                a, b = obj.region
+                obj.region = (a + delta, b + delta)
+            btns = getattr(obj, "button_regions", None)
+            if btns:
+                obj.button_regions = {k: (a + delta, b + delta)
+                                      for k, (a, b) in btns.items()}
+
+    def set_banner(self, line):
+        """Put `line` (provider · model · effort) at the top of the sheet,
+        above any history. State, so a repaint keeps it; on the view it is
+        written in place — replacing an older banner — and everything below
+        (composer anchors, turn regions) moves with it. Viewless: state only.
+        """
+        if isinstance(line, (tuple, list)):
+            label, model, effort = (list(line) + ["", "", ""])[:3]
+            line = ", ".join(identity_parts(label, model, effort))
+        line = " ".join(str(line or "").split()) or None
+        old = self._banner_block()
+        self.banner = line
+        view = self.owner.view
+        if not self._has_view():
+            return
+        new = self._banner_block()
+        try:
+            head = view.substr(_R(0, min(len(old), view.size()))) if old else ""
+        except Exception:
+            head = ""
+        old_len = len(old) if old and head == old else 0
+        if old_len == len(new) and head == new:
+            return
+        delta = len(new) - old_len
+        self._shift_below_banner(delta)
+        self.owner._replace(0, old_len, new)
+        for conv in list(self.conversations) + ([self.current] if self.current else []):
+            if conv is not None and conv.region:
+                a, b = conv.region
+                conv.region = (a + delta, b + delta)
+        if self.current and self.current.region:
+            a, b = self.current.region
+            self.owner.sheet.set_hidden_region(keys.CONV_REGION, a, b)
+        self._reset_proj()
+
+    def project_text(self):
+        """The sheet as repaint_from_state would draw it — from state, no
+        view needed. Lets a reader see a session that is not on screen
+        (single mode: every session but the bound one is viewless)."""
+        parts = []
+        banner = self._banner_block()
+        if banner:
+            parts.append(banner)
+        convs = list(self.conversations) + ([self.current] if self.current else [])
+        for conv in convs:
+            first = bool(banner) and parts == [banner]
+            parts.append(self.conversation_body(
+                conv, leading_nl=bool(parts) and not first))
+        return "".join(parts)
 
     def repaint_from_state(self):
         """Reproject conversations onto the bound view. Viewless: no-op.
@@ -1119,14 +1226,20 @@ class TurnRenderer:
         if not view or not view.is_valid():
             return
         parts = []
+        banner = self._banner_block()
+        if banner:
+            parts.append(banner)
         for conv in self.conversations:
-            body = self.conversation_body(conv, leading_nl=bool(parts))
+            first = parts == [banner] if banner else False
+            body = self.conversation_body(conv, leading_nl=bool(parts) and not first)
             start = sum(len(p) for p in parts)
             conv.region = (start, start + len(body)) if body else None
             parts.append(body)
         cur_start = sum(len(p) for p in parts)
         if self.current:
-            parts.append(self.conversation_body(self.current, leading_nl=bool(parts)))
+            first = bool(banner) and parts == [banner]
+            parts.append(self.conversation_body(
+                self.current, leading_nl=bool(parts) and not first))
         body = "".join(parts)
         self.owner._replace(0, view.size(), body)
         if self.current:
@@ -1146,6 +1259,12 @@ class TurnRenderer:
             pass
         c = self.owner.composer
         was_input_mode = c.is_input_mode()
+        m = self.owner.modals
+        # A question / permission / plan the agent is waiting on survives a
+        # clear: dropping it unanswered left the turn waiting forever.
+        keep_modals = bool(m._permission_queue) or any(
+            x is not None and getattr(x, "callback", None) is not None
+            for x in (m.pending_question, m.pending_permission, m.pending_plan))
         sess = get_session_for_view(self.owner.view)
         was_working = bool(
             (self.current and self.current.working)
@@ -1186,7 +1305,10 @@ class TurnRenderer:
             keys.write_setting(view.settings(), keys.INPUT_MODE, False)
         self.conversations = []
         self.current = None
-        self.owner.modals.reset_all()
+        if keep_modals:
+            m.drop_regions()        # their text went with the buffer
+        else:
+            m.reset_all()
         self.owner.auto_allow_tools.clear()
         c._pending_context_region = (0, 0)
         c._input_mode = False
@@ -1198,6 +1320,8 @@ class TurnRenderer:
         if was_working:
             self.current = Conversation(prompt="(continued)", working=True)
             self.current.region = (0, 0) if self._has_view() else None
+            if self._has_view():
+                self.owner.sheet.set_hidden_region(keys.CONV_REGION, 0, 0)
             self.current.events.extend(carry_bg)
             self.current.todos = carry_todos
             self.current.goal = carry_goal
@@ -1216,6 +1340,8 @@ class TurnRenderer:
                         c.set_composer_text(draft)
                     except Exception:
                         pass
+            if keep_modals:
+                self._redraw_modals_after_clear()
             return
         if carry_bg or carry_todos or carry_goal:
             carry = Conversation(prompt="", working=False)
@@ -1234,6 +1360,40 @@ class TurnRenderer:
                     c.set_composer_text(draft)
                 except Exception:
                     pass
+        if keep_modals:
+            self._redraw_modals_after_clear()
+
+    def _redraw_modals_after_clear(self):
+        m = self.owner.modals
+        try:
+            m.rerender_pending()
+            m._sync_modal_settings()
+        except Exception as e:
+            print("[Submarine] redraw modals after clear: %s" % e)
+
+    def _revive_for_output(self):
+        """Output while a turn runs but no turn is open (a clear took it):
+        open a `(continued)` turn at the end instead of dropping the output.
+        False when the session is not working (nothing to attach to)."""
+        sess = self._session()
+        if sess is None or not getattr(sess, "working", False):
+            return False
+        self.current = Conversation(prompt="(continued)", working=True)
+        view = self.owner.view
+        if self._has_view():
+            end = view.size()
+            try:
+                c = self.owner.composer
+                if c.is_input_mode():
+                    end = min(end, int(c.peel_start()))
+            except Exception:
+                pass
+            self.current.region = (end, end)
+            self.owner.sheet.set_hidden_region(keys.CONV_REGION, end, end)
+        else:
+            self.current.region = None
+        self._reset_proj()
+        return True
 
     def clear_keep_last(self):
         if self.current is not None:
@@ -1251,6 +1411,10 @@ class TurnRenderer:
                 sublime.status_message("Submarine: already only last round")
             return
         c = self.owner.composer
+        m = self.owner.modals
+        keep_modals = bool(m._permission_queue) or any(
+            x is not None and getattr(x, "callback", None) is not None
+            for x in (m.pending_question, m.pending_permission, m.pending_plan))
         was_input = c.is_input_mode()
         draft = ""
         if was_input:
@@ -1275,7 +1439,10 @@ class TurnRenderer:
         self.conversations = []
         self.current = keep
         self.current.region = (0, 0) if self._has_view() else None
-        self.owner.modals.reset_all(keep_auto=True)
+        if keep_modals:
+            m.drop_regions()        # redrawn after the render below
+        else:
+            m.reset_all(keep_auto=True)
         c._pending_context_region = (0, 0)
         c._input_mode = False
         c._input_start = 0
@@ -1288,6 +1455,8 @@ class TurnRenderer:
             self._do_render()
         except Exception as e:
             print("[Submarine] clear_keep_last render: %s" % e)
+        if keep_modals:
+            self._redraw_modals_after_clear()
         self.owner.sheet.update_title()
         if was_input:
             c.enter_input_mode()
@@ -1405,7 +1574,7 @@ class TurnRenderer:
                 reg0 = conv.region[0]
             except Exception:
                 reg0 = 0
-        prefix = "\n" if reg0 > 0 else ""
+        prefix = "\n" if reg0 > self._banner_end() else ""
         if conv.prompt and getattr(conv, "injected", False):
             lines.append(prefix + format_injected_header(conv.prompt))
         elif conv.prompt:
@@ -1519,6 +1688,7 @@ class TurnRenderer:
                 lines.append("  %s\n" % hint)
         if conv.has_meta or conv.duration > 0:
             lines.append(self._meta_line(conv))
+        lines.extend(_note_lines(conv))
         if not is_working and show_tasks:
             lines.append("\n")
             _append_task_lines()
@@ -1580,15 +1750,7 @@ class TurnRenderer:
                     keys.read_setting(st, keys.EFFORT),
                 )
         label, model, effort = (list(identity or ()) + ["", "", ""])[:3]
-        if model:
-            if label and label not in ("Claude", "Submarine"):
-                meta_parts.append("%s/%s" % (label, model))
-            else:
-                meta_parts.append(model)
-        elif label and label not in ("Claude", "Submarine"):
-            meta_parts.append(label)
-        if effort:
-            meta_parts.append("effort:%s" % effort)
+        meta_parts.extend(identity_parts(label, model, effort))
         if not meta_parts:
             meta_parts.append("ok")
         return "\n  @done(%s)\n" % ", ".join(meta_parts)
@@ -1688,28 +1850,38 @@ class TurnRenderer:
                 caret_off = max(0, min(int(c._draft_caret_off), len(draft or "")))
 
         view_size = view.size()
+        bound = peel if (was_input and peel is not None) else view_size
+
+        def _fits(a, b):
+            return 0 <= a <= b <= view_size
+
         tracked = view.get_regions(keys.CONV_REGION)
-        if tracked and tracked[0].size() > 0:
+        if tracked and tracked[0].size() > 0 and _fits(tracked[0].begin(), tracked[0].end()):
             start, end = tracked[0].begin(), tracked[0].end()
-        elif self.current.region:
+        elif self.current.region and _fits(*self.current.region):
             start, end = self.current.region
-        else:
+        elif self.current.region is None and not tracked:
             # None region: full recompute of the live turn over the buffer.
             start, end = 0, view_size
-        if start > view_size or end > view_size:
-            if not self.current.prompt:
-                return
-            content = view.substr(_R(0, view_size))
-            if getattr(self.current, "injected", False):
-                prompt_marker = format_injected_header(self.current.prompt)[:22]
-            else:
-                prompt_marker = "◎ %s" % self.current.prompt[:20]
-            last_pos = content.rfind(prompt_marker)
-            if last_pos >= 0:
-                start = last_pos
-                end = peel if (was_input and peel is not None) else view_size
-            else:
-                return
+        else:
+            # A region that does not fit the sheet (left over from before a
+            # Cmd+Shift+K). Find the turn's header; failing that, the live
+            # turn is the last thing before the composer — draw it there.
+            # Returning here instead dropped every later update: the sheet
+            # stopped printing while the turn ran on.
+            start = end = None
+            if self.current.prompt:
+                content = view.substr(_R(0, view_size))
+                if getattr(self.current, "injected", False):
+                    prompt_marker = format_injected_header(self.current.prompt)[:22]
+                else:
+                    prompt_marker = "◎ %s" % self.current.prompt[:20]
+                last_pos = content.rfind(prompt_marker)
+                if last_pos >= 0:
+                    start, end = last_pos, bound
+            if start is None:
+                start = end = max(0, min(bound, view_size))
+            self.current.region = (start, end)
 
         text, events_end_off = self._build_live_text()
         trail = self.owner.modals.trailing_ui_start()
@@ -2406,6 +2578,12 @@ _REPLAYABLE = frozenset((
 ))
 
 
+def _note_lines(conv):
+    """`  @model(a → b)` lines under a turn's @done — the same form (and
+    highlight) as @done and @session."""
+    return ["  @%s\n" % n for n in (getattr(conv, "notes", None) or []) if n]
+
+
 def _clone_conv(conv):
     """Deep-ish copy of a Conversation so catch-up can rewind without aliasing."""
     if conv is None:
@@ -2448,6 +2626,7 @@ def _clone_conv(conv):
     return Conversation(
         prompt=conv.prompt,
         injected=getattr(conv, "injected", False),
+        notes=list(getattr(conv, "notes", None) or []),
         events=events,
         todos=todos,
         todos_all_done=conv.todos_all_done,

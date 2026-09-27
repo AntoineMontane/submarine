@@ -184,6 +184,102 @@ class TestQuestionSurvivesSwitch(_SingleViewCase):
         b.turn.end_live()
         self._assert_typeable(b, bo)
 
+    def _two_turns(self):
+        from tests.test_single_view import _Region
+        b, bo, _bc = _live(self.win, "asker")
+        self.hv.attach(self.win, b)
+        bo.prompt("first")
+        bo.text("first answer\n")
+        bo.meta(1.0)
+        first_end = bo.view.size()
+        bo.prompt("second")
+        bo.text("I will ask before changing it:\n")
+        return b, bo, first_end, _Region
+
+    def test_a_question_goes_under_the_live_turn_not_an_old_one(self):
+        """The screenshot: a stale turn region (left on the first turn) put
+        the new question under the first turn's @done."""
+        b, bo, first_end, _Region = self._two_turns()
+        bo.view._regions[keys.CONV_REGION] = [_Region(0, first_end)]   # stale
+        bo.question_request(4, Q, lambda ans: None)
+        text = bo.view.substr(None)
+        self.assertGreater(text.index("❓ pick"), text.index("I will ask before changing it"))
+        self.assertEqual(text.count("❓"), 1)
+
+    def test_an_orphaned_question_block_above_is_removed(self):
+        b, bo, first_end, _Region = self._two_turns()
+        orphan = "\n  ❓ old question\n    [1] x\n"
+        at = first_end
+        bo.view._content = bo.view._content[:at] + orphan + bo.view._content[at:]
+        bo.view._regions[keys.QUESTION_BLOCK] = [_Region(at, at + len(orphan))]
+        bo.question_request(4, Q, lambda ans: None)
+        text = bo.view.substr(None)
+        self.assertNotIn("old question", text)
+        self.assertGreater(text.index("❓ pick"), text.index("I will ask before changing it"))
+
+    def test_a_full_clear_keeps_a_pending_question_answerable(self):
+        """Cmd+Shift+K dropped the pending question unanswered: the agent
+        waited on it forever."""
+        b, bo, _bc = _live(self.win, "asker")
+        self.hv.attach(self.win, b)
+        b._enter_input_with_draft()
+        b.query("ask")
+        answered = []
+        bo.question_request(3, Q, lambda ans: answered.append(ans))
+        bo.clear()
+        self.assertIsNotNone(bo.pending_question)
+        self.assertIn("❓ pick", bo.view.substr(None))
+        self.assertTrue(bo.handle_question_key("1"))
+        self.assertEqual(answered, [{"pick": "x"}])
+
+    def test_clear_keep_last_keeps_a_pending_question_answerable(self):
+        b, bo, _bc = _live(self.win, "asker")
+        self.hv.attach(self.win, b)
+        bo.prompt("older")
+        bo.meta(0)
+        b._enter_input_with_draft()
+        b.query("ask")
+        answered = []
+        bo.question_request(3, Q, lambda ans: answered.append(ans))
+        bo.clear_keep_last()
+        self.assertIn("❓ pick", bo.view.substr(None))
+        self.assertTrue(bo.handle_question_key("2"))
+        self.assertEqual(answered, [{"pick": "y"}])
+
+    def test_output_after_an_idle_clear_is_not_lost(self):
+        b, bo, _bc = _live(self.win, "talker")
+        self.hv.attach(self.win, b)
+        bo.prompt("hello")
+        bo.text("hi\n")
+        bo.meta(0)
+        bo.clear()                              # idle: no turn is kept
+        self.assertIsNone(bo.current)
+        b.turn.begin_query()                    # the agent works on its own
+        self.assertTrue(b.working)
+        bo.text("self-wake output\n")
+        self.assertIn("self-wake output", bo.view.substr(None))
+
+    def test_output_after_a_clear_mid_turn_keeps_printing(self):
+        """The live sheet stopped printing after Cmd+Shift+K: the tracked
+        turn region ran past the end of the sheet, the render could not find
+        `◎ (continued)` and gave up on every later update."""
+        from tests.test_single_view import _Region
+        b, bo, _bc = _live(self.win, "talker")
+        self.hv.attach(self.win, b)
+        b._enter_input_with_draft()
+        b.query("go")
+        bo.text("before the clear\n")
+        bo.clear()
+        self.assertEqual(bo.current.prompt, "(continued)")
+        bo.current.events.append("after the clear\n")
+        size = bo.view.size()
+        bo.view._regions[keys.CONV_REGION] = [_Region(size, size + 4)]   # stale
+        bo.renderer._struct_dirty = True
+        bo.renderer._render_current()
+        text = bo.view.substr(None)
+        self.assertIn("after the clear", text)
+        self.assertNotIn("before the clear", text)
+
     def test_a_plain_question_is_still_answerable_after_a_switch(self):
         a, _ao, _ac = _live(self.win, "front")
         b, bo, _bc = _live(self.win, "asker")
@@ -281,3 +377,31 @@ class TestModalSheetStaysLockedAcrossASwitch(_SingleViewCase):
         self._assert_locked(bo)
         self.assertTrue(bo.handle_plan_key("y"), "plan keys ignored after the switch")
         self.assertEqual(len(responses), 1)
+
+
+class ReadViewlessOutputTest(_SingleViewCase):
+    """read_session_output on a session that is not on screen returned
+    "Session output view not found"; it reads the sheet from state now."""
+
+    def setUp(self):
+        super().setUp()
+        install_sublime()
+        self.win = RecordingWindow()
+        self.hv = HostView.for_window(self.win)
+
+    def test_a_viewless_session_is_read_from_state(self):
+        import mcp.socket_server as ss
+        a, ao, _ac = _live(self.win, "worker")
+        b, bo, _bc = _live(self.win, "front")
+        self.hv.attach(self.win, a)
+        ao.prompt("map the module")
+        ao.text("It has three parts.\n")
+        ao.meta(1.0)
+        self.hv.attach(self.win, b)            # a goes viewless
+        self.assertIsNone(ao.view)
+        srv = ss.MCPSocketServer.__new__(ss.MCPSocketServer)
+        srv._session_context_budget = lambda s: {}
+        res = srv._read_session_output(agent_id=a.agent_id)
+        self.assertNotIn("error", res, res)
+        self.assertIn("◎ map the module ▶", res["output"])
+        self.assertIn("It has three parts.", res["output"])

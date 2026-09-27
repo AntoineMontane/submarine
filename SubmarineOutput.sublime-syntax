@@ -15,6 +15,10 @@ contexts:
     - match: '^\s*@done\(.*\)$'
       scope: submarine.meta.done comment.line
 
+    # What the session runs on, above its history — styled like @done.
+    - match: '^\s*@session\(.*\)$'
+      scope: submarine.meta.done comment.line
+
     # A turn the runtime started (a background task finished, a wake):
     # `⚙ label ▷` at column 0 — not a prompt, so not the prompt style. Tool
     # rows are indented, so they never match here. Same fold marker as ◎.
@@ -86,6 +90,10 @@ contexts:
       scope: submarine.task.more
     - match: '^\s*\(super\+click to collapse\)$'
       scope: submarine.task.more
+
+    # A change between turns (model switch), under the turn's @done.
+    - match: '^\s*@model\(.*\)$'
+      scope: submarine.meta.done comment.line
 
     # Tool pending
     - match: '^\s*☐ .+$'

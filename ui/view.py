@@ -657,6 +657,18 @@ class SubmarineOutputView(FormatHelpers):
         Viewless: records conversation, no buffer write."""
         self.renderer.prompt(text, context_names, context_refs, injected=injected)
 
+    def note(self, text):
+        """A `⇄` line after the latest turn (model switch). Viewless: state."""
+        return self.renderer.note(text)
+
+    def project_text(self):
+        """The sheet text from state (works viewless)."""
+        return self.renderer.project_text()
+
+    def set_banner(self, line):
+        """Provider · model line above the history. Viewless: state only."""
+        self.renderer.set_banner(line)
+
     def begin_continued(self):
         """Open a live sheet after @done without wiping the last turn."""
         self.renderer.begin_continued()

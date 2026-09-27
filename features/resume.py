@@ -810,6 +810,9 @@ def paint_resume_preview(session) -> bool:
     turns = load_turns(sid, backend, cwd, jsonl,
                        agent_id=getattr(session, "agent_id", None) or "")
     chosen = select_preview(turns)
+    show = getattr(session, "_show_provider_banner", None)
+    if callable(show):
+        show()                      # history opens with what it runs on
     if not chosen:
         return False
     for t in chosen:

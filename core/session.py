@@ -847,15 +847,12 @@ class Session:
                 )
             except Exception:
                 pass
-        if not self.resume_id or self.fork:
-            # A fresh sheet says what it is talking to before the first
-            # prompt: the provider and model the session actually started
-            # with (profile → session → default), so a wrong default or a
-            # leftover pick is visible at once, not after the first reply.
-            try:
-                self.output.text("\n*%s*\n" % self.provider_line())
-            except Exception:
-                pass
+        # Every sheet says what it is talking to, above its history: the
+        # provider and model the session actually started with (profile →
+        # session → default), fresh or resumed, so a wrong default or a
+        # leftover pick is visible at once, not after the first reply.
+        # (It was output.text() — dropped while no turn existed yet.)
+        self._show_provider_banner()
         self.chrome.set_status("ready")
         if not self.quick_mode:
             self._save_session()
@@ -3039,6 +3036,35 @@ class Session:
         if self._query_start is None:
             return 0.0
         return max(0.0, time.time() - self._query_start)
+
+    def note_model_switch(self, old, new):
+        # type: (Optional[str], Optional[str]) -> None
+        """Mark a model change in the history, where it happened; before the
+        first turn the banner at the top already names the model."""
+        old, new = str(old or "").strip(), str(new or "").strip()
+        if not new or old == new:
+            return
+        text = ("model(%s → %s)" % (old, new)) if old else ("model(%s)" % new)
+        noted = False
+        try:
+            noted = bool(self.output.note(text))
+        except Exception:
+            noted = False
+        if not noted:
+            self._show_provider_banner()
+
+    def _show_provider_banner(self):
+        # type: () -> None
+        setter = getattr(self.output, "set_banner", None)
+        if callable(setter) and not self.quick_mode:
+            try:
+                spec = self._spec()
+                label = (self.provider_label or getattr(spec, "label", None)
+                         or self.backend or "")
+                setter((str(label), str(self.model or ""),
+                        str(getattr(self, "effort", "") or "")))
+            except Exception:
+                pass
 
     def provider_line(self):
         # type: () -> str

@@ -45,6 +45,20 @@ def last_event_is_text(events: list) -> bool:
     return bool(events) and isinstance(events[-1], str)
 
 
+def identity_parts(label, model, effort) -> list:
+    """`Grok/grok-4.6`, `effort:high` — who ran a turn, as @done says it.
+    The default provider (Claude) is not named, only its model."""
+    parts = []
+    plain = label in ("", None, "Claude", "Submarine")
+    if model:
+        parts.append(model if plain else "%s/%s" % (label, model))
+    elif not plain:
+        parts.append(label)
+    if effort:
+        parts.append("effort:%s" % effort)
+    return parts
+
+
 def format_injected_header(text: str) -> str:
     """Header of a turn the runtime started: `⚙ label ▷`, one line."""
     label = " ".join((text or "").split())

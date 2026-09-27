@@ -111,6 +111,15 @@ class FakeOutput:
         self.caret_restores = 0
         self._caret_owner = "draft"
 
+    def note(self, text):
+        self.notes = getattr(self, "notes", [])
+        self.notes.append(text)
+        return bool(self.prompts)
+
+    def set_banner(self, line):
+        self.banners = getattr(self, "banners", [])
+        self.banners.append(line)
+
     def prompt(self, text, context_names=None, context_refs=None, injected=False):
         self.prompts.append((text, context_names, context_refs))
         self.injected_prompts = getattr(self, "injected_prompts", [])
