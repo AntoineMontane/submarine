@@ -569,6 +569,26 @@ class QueryMixin:
             if self._prompt_acp_id == rid:
                 self._prompt_acp_id = None
 
+    def _note_interrupt(self) -> None:
+        """Esc happened now. Kimi can answer it with a turn of its own that
+        refuses the next prompts (_silently_refused, _stop_post_interrupt_turn
+        read this). Every interrupt override calls it."""
+        self._last_interrupt_ts = time.time()
+        self._post_interrupt_cancelled = False
+
+    def _interrupt_terminal_ids(self) -> list:
+        """The shells an Esc stops: the turn's own, never a background one.
+        A background shell outlives its turn (as Claude's do) — killing it
+        made Kimi start a turn of its own over the "task terminated" notice,
+        which swallowed the next prompt. stop_task stops one on purpose."""
+        bg = set((getattr(self, "_terminal_bg", None) or {}).keys())
+        out = []
+        for tid, slot in list((self._terminals or {}).items()):
+            if tid in bg or (isinstance(slot, dict) and slot.get("bg")):
+                continue
+            out.append(tid)
+        return out
+
     async def handle_interrupt(self, req_id: Optional[int],
                                 params: dict) -> None:
         """Cancel the in-flight ACP turn.
@@ -585,10 +605,7 @@ class QueryMixin:
         early — agent keeps turn.agent_busy. Wait longer before force; next
         query also re-settles via _cancel_agent_turn.
         """
-        # Esc: Kimi answers the killed shells with a turn of its own, which
-        # then refuses prompts (see _silently_refused / _stop_post_interrupt_turn).
-        self._last_interrupt_ts = time.time()
-        self._post_interrupt_cancelled = False
+        self._note_interrupt()
         fut = self._prompt_fut
         active = fut is not None and not fut.done()
         has_query = self._query_req_id is not None
@@ -605,7 +622,7 @@ class QueryMixin:
         if ((not active and not has_query) or (
                 self._cancel_in_flight and not active)) and not grok_leftover:
             n = 0
-            for tid in list(self._terminals):
+            for tid in self._interrupt_terminal_ids():
                 try:
                     await self._terminal_close(tid)
                     n += 1
@@ -618,7 +635,7 @@ class QueryMixin:
             return
 
         # Kill client-side terminals so terminal/wait_for_exit unblocks.
-        for tid in list(self._terminals):
+        for tid in self._interrupt_terminal_ids():
             try:
                 await self._terminal_close(tid)
             except Exception:

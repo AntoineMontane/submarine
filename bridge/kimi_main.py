@@ -259,12 +259,13 @@ class KimiBridge(KimiBgMixin, AcpBridge):
         Interrupt = session/cancel + stop agent shells + settle host waiters.
         Session stays alive for the next message.
         """
+        self._note_interrupt()
         fut = self._prompt_fut
         active = fut is not None and not fut.done()
         has_query = self._query_req_id is not None
         if not active and not has_query:
             n = 0
-            for tid in list(self._terminals):
+            for tid in self._interrupt_terminal_ids():
                 try:
                     await self._terminal_close(tid)
                     n += 1
@@ -291,7 +292,7 @@ class KimiBridge(KimiBgMixin, AcpBridge):
             return
 
         # Stop agent shells so wait_for_exit cannot hold the turn open
-        for tid in list(self._terminals):
+        for tid in self._interrupt_terminal_ids():
             try:
                 await self._terminal_close(tid)
             except Exception:

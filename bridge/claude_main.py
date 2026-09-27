@@ -1095,6 +1095,15 @@ Agent ID: {agent_id_info}
         if getattr(message, "parent_tool_use_id", None):
             return
 
+        # Only turn content opens or belongs to a turn. A RateLimitEvent (or a
+        # ConversationResetMessage, SessionMessage, …) that lands between
+        # turns fell through to the "the CLI started a turn" branch below and
+        # opened a turn that nothing would ever close — busy forever.
+        if not isinstance(message, (StreamEvent, AssistantMessage,
+                                    UserMessage, ResultMessage)):
+            _logger.info(f"route: {type(message).__name__} is not turn content")
+            return
+
         kind = self._origin_kind(message)
         hq = self._host_query
 

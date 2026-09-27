@@ -146,6 +146,16 @@ class RouteTest(unittest.TestCase):
         self.assertEqual([e for e in self.out if e[0] == "result"],
                          [("result", 3, {"ok": True, "task_id": "b7x"})])
 
+    def test_a_rate_limit_event_between_turns_opens_no_turn(self):
+        """It fell through to the injected-turn branch: the sheet showed an
+        empty `⚙ background task` turn, busy until a result that never came."""
+        ev = _SDK.RateLimitEvent.__new__(_SDK.RateLimitEvent)
+        for f, v in (("rate_limit_info", {}), ("uuid", "u"), ("session_id", "s")):
+            object.__setattr__(ev, f, v)
+        self._route(ev)
+        self.assertEqual(self.out, [])
+        self.assertFalse(self.b._injected)
+
     def test_our_turn_closes_the_query_untagged(self):
         fut = self._open_query()
         self._route(self.user("hi"), self.assistant("yo"), self.result("human"))

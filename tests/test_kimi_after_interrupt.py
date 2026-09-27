@@ -123,3 +123,41 @@ class PostInterruptTurnTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KimiInterruptTest(unittest.TestCase):
+    """Through KimiBridge's own handle_interrupt — the override that skipped
+    the bookkeeping, so the refusal and post-Esc paths never fired for Kimi."""
+
+    def _esc(self, active=False):
+        import acp.query as q
+        import kimi_main
+        b = _kimi()
+        b._terminals = {"t_fg": {"proc": None}, "t_bg": {"proc": None, "bg": True},
+                        "t_bg2": {"proc": None}}
+        b._terminal_bg = {"t_bg2": {"task_id": "acp-term-t_bg2", "tool_use_id": "call_9"}}
+        b._prompt_fut = None
+        b._query_req_id = 5 if active else None
+        b._cancel_in_flight = False
+        closed = []
+
+        async def close(tid):
+            closed.append(tid)
+        b._terminal_close = close
+
+        async def cancel(**kw):
+            pass
+        b._cancel_agent_turn = cancel
+        saved = (kimi_main.send_result,)
+        kimi_main.send_result = lambda rid, res: None
+        self.addCleanup(lambda: setattr(kimi_main, "send_result", saved[0]))
+        asyncio.run(b.handle_interrupt(1, {}))
+        return b, closed
+
+    def test_esc_keeps_background_shells_and_records_itself(self):
+        for active in (False, True):
+            b, closed = self._esc(active)
+            self.assertEqual(closed, ["t_fg"], "background shells outlive the turn")
+            self.assertGreater(b._last_interrupt_ts, time.time() - 5)
+            self.assertFalse(b._post_interrupt_cancelled)
+            self.assertTrue(b._silently_refused({"stopReason": "end_turn"}, time.time()))
