@@ -59,9 +59,12 @@ CUR_MARK = "▸"
 CUR_CELL = CUR_MARK + " "
 BLANK_CELL = " " * len(CUR_CELL)
 STAR_MARK = "✨"  # pinned session, before the title
+# CURRENT order: what needs you (a question, an error) first, then by
+# recency. Unread is a mark, not a band — hoisting every finished reply to
+# the top reshuffled the list each time a session answered.
 _LIVE_BAND = {
-    "input": 0, "error": 0, "unread": 0,
-    "working": 1, "bg": 1, "ready": 1, "sleeping": 2,
+    "input": 0, "error": 0,
+    "working": 1, "bg": 1, "ready": 1, "unread": 1, "sleeping": 2,
 }
 
 
@@ -296,8 +299,9 @@ def use_compact(cols: int) -> bool:
     return 0 < cols < COMPACT_COLS
 
 
-# Header slots after SESSIONS: running · waiting · error. Each shows its
-# row mark when any live session is in that state, a centered dot when none.
+# Tab-title slots after "☰ Sessions": running · waiting · error. Each shows
+# its row mark when any live session is in that state, a centered dot when
+# none — readable from the tab bar without opening the list.
 _HEADER_SLOTS = (
     (("working", "bg"), "●"),
     (("input",), "?"),
@@ -313,16 +317,23 @@ def header_state_glyphs(live: Optional[List[dict]] = None) -> str:
                    for names, glyph in _HEADER_SLOTS)
 
 
+TITLE = "☰ Sessions"
+
+
+def list_title(live: Optional[List[dict]] = None) -> str:
+    return "%s %s" % (TITLE, header_state_glyphs(live))
+
+
 def format_header(cols: int = 0, live: Optional[List[dict]] = None) -> str:
-    left = "SESSIONS " + header_state_glyphs(live)
-    right = "enter open · v reveal · t tear · f fork · s star · r rename · del close"
+    _ = live
+    left = "SESSIONS"
+    right = "enter open · t tear · f fork · s star · r rename · del close"
     if not cols:
         return f"{left}                  {right}"
     for cand in (
         right,
-        "enter open · v reveal · f fork · s star · r rename · del close",
-        "↵ open · v · t · f · s · r · del",
-        "v · f · s · r · del",
+        "enter open · f fork · s star · r rename · del close",
+        "↵ open · t · f · s · r · del",
         "f · s · r · del",
         "s · r · del",
         "r · del",
@@ -1648,6 +1659,45 @@ def close_confirm(window, row: dict) -> bool:
         return True
 
 
+def busy_reasons(row: dict, kids: Optional[List[dict]] = None) -> List[str]:
+    """Why closing this row would cut work off: mid-turn, background tasks,
+    a question it waits on, children still working. Empty = safe to close."""
+    reasons = []  # type: List[str]
+    if not row or row.get("kind") != "live":
+        return reasons
+    session = _live_session_for_row(row)
+    if session is not None:
+        if getattr(session, "working", False):
+            reasons.append("it is mid-turn")
+        try:
+            n_bg = len(session.output.active_background_tools() or [])
+        except Exception:
+            n_bg = 0
+        if n_bg:
+            reasons.append("%d background task%s running" % (n_bg, "" if n_bg == 1 else "s"))
+        if awaiting_input(session):
+            reasons.append("it is waiting on your answer")
+    busy_kids = [k for k in (kids or []) if k.get("kind") == "live"
+                 and (k.get("status") or "") in ("working", "bg", "input")]
+    if busy_kids:
+        n = len(busy_kids)
+        reasons.append("%d child session%s still working" % (n, "" if n == 1 else "s"))
+    return reasons
+
+
+def busy_confirm(window, row: dict, reasons: List[str]) -> bool:
+    """One dialog for closing a session that is still doing something."""
+    if not reasons or sublime is None:
+        return True
+    name = one_line_title(row.get("name") or "") or row.get("session_id") or "session"
+    msg = "Close this session?\n\n%s\n\nIt is still busy:\n%s\n\nClosing stops it." % (
+        name, "\n".join("• %s" % r for r in reasons))
+    try:
+        return bool(sublime.ok_cancel_dialog(msg, "Close anyway"))
+    except Exception:
+        return True
+
+
 def descendant_rows(index: List[dict], row: dict) -> List[dict]:
     """Rows shown under `row` in its section (parent_agent_id chain), deepest
     first so a caller can close leaves before their parents."""
@@ -1760,6 +1810,12 @@ def close_row(window, row: dict, remove: Optional[bool] = None) -> bool:
     sid = row.get("session_id")
     if row.get("kind") == "live":
         session = _live_session_for_row(row)
+        if session and sid and not remove:
+            _push_undo({"kind": "closed", "name": row.get("name") or "",
+                        "row": {"session_id": getattr(session, "session_id", None) or sid,
+                                "backend": getattr(session, "backend", None)
+                                or row.get("backend"),
+                                "name": row.get("name")}})
         if session:
             view = None
             try:
@@ -1832,6 +1888,82 @@ def close_row(window, row: dict, remove: Optional[bool] = None) -> bool:
     return False
 
 
+# Undo for the list's delete (Cmd+Z in the Sessions list): what the last
+# deletes dropped — saved entries and pins of a HISTORY row, or the live
+# session a CURRENT row stopped. Newest last; process-local.
+_UNDO = []  # type: List[dict]
+_UNDO_CAP = 20
+
+
+def _push_undo(entry: dict) -> None:
+    _UNDO.append(entry)
+    del _UNDO[:-_UNDO_CAP]
+
+
+def _remember_forget(row: dict, ids: List[str], cwd: str) -> None:
+    try:
+        from core.records import SessionStore
+        store = SessionStore()
+        records = [r for r in (store.find(sid) for sid in ids) if r]
+    except Exception:
+        records = []
+    pins = {}
+    try:
+        starred = set(load_bookmarks(cwd or None) or ())
+        brecs = dict(load_bookmark_records(cwd or None) or {})
+        pins = {sid: brecs.get(sid) or {} for sid in ids if sid in starred}
+    except Exception:
+        pins = {}
+    if records or pins:
+        _push_undo({"kind": "removed", "records": records, "pins": pins,
+                    "cwd": cwd, "name": row.get("name") or ""})
+
+
+def undo_last_delete(window) -> bool:
+    """Bring back what the last list delete took. False when nothing to undo."""
+    if not _UNDO:
+        if sublime is not None:
+            sublime.status_message("Submarine: nothing to undo in the list")
+        return False
+    entry = _UNDO.pop()
+    name = one_line_title(entry.get("name") or "") or "session"
+    if entry.get("kind") == "closed":
+        ok = resume_saved(window, entry.get("row") or {}, focus=False)
+    else:
+        ok = False
+        try:
+            from core.records import SessionStore
+            store = SessionStore()
+            for rec in reversed(entry.get("records") or []):
+                if store.find(rec.get("session_id")) is None:
+                    store.upsert(dict(rec))
+                    ok = True
+        except Exception as e:
+            print("[Submarine] undo delete: %s" % e)
+        pins = entry.get("pins") or {}
+        if pins:
+            try:
+                cwd = entry.get("cwd") or None
+                starred = set(load_bookmarks(cwd) or ())
+                recs = dict(load_bookmark_records(cwd) or {})
+                for sid, rec in pins.items():
+                    starred.add(sid)
+                    if rec:
+                        recs[sid] = rec
+                save_bookmarks(starred, cwd, records=recs)
+                ok = True
+            except Exception as e:
+                print("[Submarine] undo delete (pins): %s" % e)
+    try:
+        refresh_session_list(window)
+    except Exception:
+        pass
+    if sublime is not None:
+        sublime.status_message(("Submarine: restored %s" % name) if ok
+                               else "Submarine: could not restore %s" % name)
+    return ok
+
+
 def _forget_row_rows(row: dict, window=None) -> bool:
     """Drop a HISTORY row's resume entries — every id the session was resumed
     under, or the next incarnation would just take its place in the list.
@@ -1841,18 +1973,19 @@ def _forget_row_rows(row: dict, window=None) -> bool:
     clear the window's bookmark state for those ids in the same step.
     """
     ids = row_ids(row)
-    dropped = False
-    for sid in ids:
-        try:
-            dropped = bool(remove_saved_session(sid)) or dropped
-        except Exception:
-            pass
     cwd = ""
     try:
         if window and window.folders():
             cwd = window.folders()[0]
     except Exception:
         cwd = ""
+    _remember_forget(row, ids, cwd)
+    dropped = False
+    for sid in ids:
+        try:
+            dropped = bool(remove_saved_session(sid)) or dropped
+        except Exception:
+            pass
     try:
         starred = set(load_bookmarks(cwd or None) or ())
         if starred.intersection(ids):
@@ -2036,7 +2169,7 @@ class SessionListView:
             except Exception as e:
                 print("[Submarine] session list tab: %s" % e)
         # Symbol so the list tab is findable among session sheets.
-        self.view.set_name("☰ Sessions")
+        self.view.set_name(TITLE)
         self._apply_chrome()
         self.refresh(follow=True)
         self.window.focus_view(self.view)
@@ -2082,6 +2215,15 @@ class SessionListView:
         except Exception:
             return False
 
+    def _retitle(self, index):
+        """Tab title with the running / waiting / error slots."""
+        try:
+            name = list_title([r for r in index or [] if r.get("kind") == "live"])
+            if self.view.name() != name:
+                self.view.set_name(name)
+        except Exception:
+            pass
+
     def refresh(self, follow: bool = False):
         if not self.view or not self.view.is_valid():
             return
@@ -2092,6 +2234,7 @@ class SessionListView:
         cols = view_cols(self.view)
         state_cols = cols  # the fingerprint uses the width before any fallback
         text, index = build_for_window(self.window, cols=cols)
+        self._retitle(index)
         self.view.settings().set(WRITING_KEY, True)
         cur = self.view.substr(sublime.Region(0, self.view.size()))
         keep_sid = None
@@ -2231,13 +2374,15 @@ class SessionListClickListener(sublime_plugin.EventListener):
             return None
         if name in ("left_delete", "right_delete"):
             return ("submarine_session_list_close", {})
+        if name in ("undo", "soft_undo"):
+            # The list is read-only text: undo means the last delete.
+            undo_last_delete(view.window())
+            return ("noop", {})
         if name != "insert":
             return None
         ch = (args or {}).get("characters") or ""
         if ch == "r":
             return ("submarine_session_list_rename", {})
-        if ch == "v":
-            return ("submarine_session_list_reveal", {})
         if ch == "s":
             return ("submarine_session_list_star", {})
         if ch == "f":
@@ -2733,6 +2878,14 @@ class SubmarineSessionListCloseCommand(sublime_plugin.TextCommand):
         name = (row.get("name") or "").strip() or "session"
         list_view = self.view
         kids = descendant_rows(index, row)
+        # Busy (mid-turn, background tasks, a pending question, working
+        # children): say so before anything closes; that dialog stands in
+        # for the plain / starred confirm.
+        reasons = busy_reasons(row, kids)
+        if reasons:
+            if not busy_confirm(win, row, reasons):
+                return
+            confirm = True
         if kids:
             # One dialog covers the Cmd+W confirm and the children question.
             ok = starred_confirm(win, row) if not confirm else True
@@ -2743,7 +2896,7 @@ class SubmarineSessionListCloseCommand(sublime_plugin.TextCommand):
                 return
             if not take_kids:
                 kids = []
-        else:
+        elif not reasons:
             ok = close_confirm(win, row) if confirm else starred_confirm(win, row)
             if not ok:
                 return

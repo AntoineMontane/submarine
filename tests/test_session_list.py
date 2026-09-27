@@ -1016,28 +1016,35 @@ class TestRenderSessionList(unittest.TestCase):
         self.assertTrue(wide.endswith("del close"))
         self.assertIn("enter", wide)
         self.assertIn("del", wide)
-        self.assertIn("reveal", wide)
+        self.assertNotIn("reveal", wide)       # v reveal is gone
         narrow = sl.format_header(28)
         self.assertLessEqual(len(narrow), 28)
         self.assertTrue(narrow.startswith("SESSIONS"))
 
-    def test_header_shows_a_slot_per_state(self):
+    def test_tab_title_shows_a_slot_per_state(self):
         rows = [{"kind": "live", "status": "working"},
                 {"kind": "live", "status": "error"},
                 {"kind": "live", "status": "sleeping"}]
-        self.assertTrue(sl.format_header(76, rows).startswith("SESSIONS ●·✘"))
-        self.assertTrue(sl.format_header(76, []).startswith("SESSIONS ···"))
+        self.assertEqual(sl.list_title(rows), "☰ Sessions ●·✘")
+        self.assertEqual(sl.list_title([]), "☰ Sessions ···")
         waiting = [{"kind": "live", "status": "input"}, {"kind": "live", "status": "bg"}]
-        self.assertTrue(sl.format_header(76, waiting).startswith("SESSIONS ●?·"))
+        self.assertEqual(sl.list_title(waiting), "☰ Sessions ●?·")
+
+    def test_the_list_content_heading_has_no_slots(self):
         text, _index = sl.render_list([{"kind": "live", "status": "input",
                                         "name": "a", "session_id": "s1"}], [], [], cols=76)
-        self.assertTrue(text.startswith("SESSIONS ·?·"))
+        self.assertTrue(text.startswith("SESSIONS "))
+        self.assertNotIn("·?·", text.split("\n", 1)[0])
 
-    def test_syntax_colours_the_header_slots(self):
-        import os
+    def test_v_no_longer_reveals(self):
+        import json, os, re
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        syn = open(os.path.join(root, "SessionList.sublime-syntax"), encoding="utf-8").read()
-        self.assertIn("^(SESSIONS)( )([●·])([?·])([✘·])", syn)
+        raw = open(os.path.join(root, "Default.sublime-keymap"), encoding="utf-8").read()
+        raw = re.sub(r"(?m)^\s*//.*$", "", raw)
+        km = json.loads(re.sub(r",(\s*[\]}])", r"\1", raw))
+        self.assertFalse([e for e in km if e.get("command") == "submarine_session_list_reveal"])
+        for cols in (40, 60, 76, 100):
+            self.assertNotIn("v ", sl.format_header(cols).split("  ")[-1].replace("rev", ""))
 
     def test_auto_compact_by_width(self):
         self.assertTrue(sl.use_compact(24))
@@ -1189,7 +1196,7 @@ class TestRenderSessionList(unittest.TestCase):
         )
         self.assertEqual(sl._status_of(unread_working), "working")
         # A reply not yet seen still needs you after the bridge went to sleep:
-        # the row keeps `!` (attention band), not `⏸`.
+        # the row keeps `!`, not `⏸`.
         unread_asleep = types.SimpleNamespace(
             is_sleeping=True, working=False, unread=True, _compacting=False,
             output=types.SimpleNamespace(
@@ -1215,7 +1222,10 @@ class TestRenderSessionList(unittest.TestCase):
         )
         self.assertEqual(sl._status_of(halted), "error")
         self.assertEqual(sl._mark("error"), "✘")
-        self.assertEqual(sl._LIVE_BAND["error"], sl._LIVE_BAND["unread"])
+        self.assertEqual(sl._LIVE_BAND["error"], sl._LIVE_BAND["input"])
+        # Unread is a mark, not a band: a finished reply keeps its row's place.
+        self.assertEqual(sl._LIVE_BAND["unread"], sl._LIVE_BAND["ready"])
+        self.assertLess(sl._LIVE_BAND["input"], sl._LIVE_BAND["unread"])
         self.assertEqual(
             sl._stamp_of({"kind": "live", "status": "error"}), "err")
         asking = types.SimpleNamespace(
@@ -2185,3 +2195,153 @@ class FocusAgentPointsTheListTest(unittest.TestCase):
             self.timers.pop(0)[1]()
             fired += 1
         self.assertEqual(fired, len(sl._POINT_RETRY_MS))
+
+
+class StableOrderTest(unittest.TestCase):
+    """The CURRENT order moves on what the user does, not on what agents do."""
+
+    def _session(self):
+        from tests.fakes import FakeClient, make_session
+        s = make_session(client=FakeClient(), initialized=True)
+        s.last_access = 100.0
+        return s
+
+    def test_your_prompt_moves_the_row(self):
+        s = self._session()
+        s.query("hello")
+        self.assertGreater(s.last_access, 100.0)
+
+    def test_another_agents_message_or_a_notice_does_not(self):
+        s = self._session()
+        s.query("[from agent submarine::0123456789ab] name=lead\nstatus?")
+        self.assertEqual(s.last_access, 100.0)
+        s2 = self._session()
+        s2.query("<task-notification>\n<task-id>a</task-id>\n</task-notification>")
+        self.assertEqual(s2.last_access, 100.0)
+
+    def test_a_turn_ending_does_not(self):
+        s = self._session()
+        s.query("hello")
+        seen = s.last_access
+        s._result_idle("success")
+        self.assertEqual(s.last_access, seen)
+
+    def test_unread_keeps_its_place(self):
+        rows = [
+            {"kind": "live", "status": "ready", "last_access": 300, "agent_id": "a"},
+            {"kind": "live", "status": "unread", "last_access": 100, "agent_id": "b"},
+            {"kind": "live", "status": "input", "last_access": 50, "agent_id": "c"},
+        ]
+        order = [r["agent_id"] for r in sorted(rows, key=sl._section_sort_key)]
+        self.assertEqual(order, ["c", "a", "b"])
+
+
+class BusyCloseTest(unittest.TestCase):
+    """Delete in the list says so before it stops work."""
+
+    def setUp(self):
+        self._saved = sl._live_session_for_row
+        self.addCleanup(lambda: setattr(sl, "_live_session_for_row", self._saved))
+
+    def _session(self, working=False, bg=0, question=False):
+        q = types.SimpleNamespace(callback=lambda *_a: None) if question else None
+        out = types.SimpleNamespace(
+            pending_permission=None, pending_question=q, pending_plan=None,
+            active_background_tools=lambda n=bg: [object()] * n)
+        return types.SimpleNamespace(working=working, is_sleeping=False, output=out)
+
+    def test_a_busy_session_lists_why(self):
+        s = self._session(working=True, bg=2)
+        sl._live_session_for_row = lambda row: s
+        kids = [{"kind": "live", "status": "working"}, {"kind": "live", "status": "ready"}]
+        reasons = sl.busy_reasons({"kind": "live", "agent_id": "a"}, kids)
+        self.assertEqual(reasons, ["it is mid-turn", "2 background tasks running",
+                                   "1 child session still working"])
+
+    def test_a_question_counts(self):
+        s = self._session(question=True)
+        sl._live_session_for_row = lambda row: s
+        self.assertEqual(sl.busy_reasons({"kind": "live"}), ["it is waiting on your answer"])
+
+    def test_an_idle_session_or_a_history_row_has_none(self):
+        sl._live_session_for_row = lambda row: self._session()
+        self.assertEqual(sl.busy_reasons({"kind": "live"}), [])
+        self.assertEqual(sl.busy_reasons({"kind": "saved"}), [])
+
+    def test_the_close_command_asks_once_and_stops_on_cancel(self):
+        s = self._session(working=True)
+        sl._live_session_for_row = lambda row: s
+        asked, closed = [], []
+        saved = (sl.busy_confirm, sl.close_row, sl.starred_confirm, sl.close_confirm)
+        self.addCleanup(lambda: (setattr(sl, "busy_confirm", saved[0]), setattr(sl, "close_row", saved[1]),
+                                 setattr(sl, "starred_confirm", saved[2]), setattr(sl, "close_confirm", saved[3])))
+        sl.busy_confirm = lambda w, r, reasons: asked.append(list(reasons)) or False
+        sl.close_row = lambda w, r: closed.append(r) or True
+        sl.starred_confirm = sl.close_confirm = lambda w, r: self.fail("a second dialog")
+        view = types.SimpleNamespace(
+            settings=lambda: {sl.SETTING: True, sl.ROWS_KEY: '[{"line": 1, "kind": "live", "agent_id": "a", "name": "x"}]'},
+            sel=lambda: [types.SimpleNamespace(begin=lambda: 0)],
+            rowcol=lambda pt: (0, 0), window=lambda: object())
+        cmd = sl.SubmarineSessionListCloseCommand.__new__(sl.SubmarineSessionListCloseCommand)
+        cmd.view = view
+        cmd.run(None)
+        self.assertEqual(asked, [["it is mid-turn"]])
+        self.assertEqual(closed, [], "cancel keeps the session")
+
+
+class UndoDeleteTest(unittest.TestCase):
+    """Cmd+Z in the Sessions list brings back the last delete."""
+
+    def setUp(self):
+        import core.records as rec
+        d = tempfile.mkdtemp(prefix="submarine-undo-")
+        self._path = os.path.join(d, ".sessions.json")
+        saved_path = rec.default_sessions_path
+        rec.default_sessions_path = lambda plugin_dir=None: self._path
+        self.addCleanup(lambda: setattr(rec, "default_sessions_path", saved_path))
+        self.pins = {"starred": set(), "recs": {}}
+        saved = {k: getattr(sl, k) for k in ("load_bookmarks", "load_bookmark_records",
+                                             "save_bookmarks", "resume_saved", "sublime",
+                                             "refresh_session_list", "remove_saved_session")}
+        self.addCleanup(lambda: [setattr(sl, k, v) for k, v in saved.items()])
+        sl.load_bookmarks = lambda cwd=None: set(self.pins["starred"])
+        sl.load_bookmark_records = lambda cwd=None: dict(self.pins["recs"])
+
+        def save(starred, cwd=None, records=None):
+            self.pins["starred"] = set(starred)
+            self.pins["recs"] = dict(records or {})
+        sl.save_bookmarks = save
+        sl.refresh_session_list = lambda w: None
+        sl.sublime = types.SimpleNamespace(status_message=lambda m: None)
+        sl.remove_saved_session = lambda sid: rec.SessionStore().remove(sid)
+        del sl._UNDO[:]
+
+    def test_a_deleted_history_row_comes_back_with_its_pin(self):
+        from core.records import SessionStore
+        store = SessionStore()
+        store.upsert({"session_id": "s-old", "name": "keep me", "state": "closed"})
+        self.pins["starred"] = {"s-old"}
+        self.pins["recs"] = {"s-old": {"name": "keep me"}}
+        row = {"kind": "saved", "section": "HISTORY", "session_id": "s-old", "name": "keep me"}
+        self.assertTrue(sl.close_row(object(), row))
+        self.assertIsNone(store.find("s-old"))
+        self.assertNotIn("s-old", self.pins["starred"])
+        self.assertTrue(sl.undo_last_delete(object()))
+        self.assertEqual(store.find("s-old")["name"], "keep me")
+        self.assertIn("s-old", self.pins["starred"])
+        self.assertFalse(sl.undo_last_delete(object()), "nothing left to undo")
+
+    def test_a_closed_live_session_is_resumed(self):
+        live = types.SimpleNamespace(session_id="s-live", backend="kimi", output=None,
+                                     torn_off=False, agent_id="submarine::0123456789ab",
+                                     stop=lambda: None)
+        saved_live = sl._live_session_for_row
+        self.addCleanup(lambda: setattr(sl, "_live_session_for_row", saved_live))
+        sl._live_session_for_row = lambda row: live
+        resumed = []
+        sl.resume_saved = lambda w, row, focus=True: resumed.append(row) or True
+        row = {"kind": "live", "section": "CURRENT", "session_id": "s-live", "name": "busy one"}
+        sl.close_row(types.SimpleNamespace(folders=lambda: []), row)
+        self.assertTrue(sl.undo_last_delete(object()))
+        self.assertEqual(resumed[0]["session_id"], "s-live")
+        self.assertEqual(resumed[0]["backend"], "kimi")

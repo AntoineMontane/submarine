@@ -938,7 +938,13 @@ class Session:
         self._interrupt_stream = False
         self._interrupting = False
         self._user_cancelled_turn = False
-        self.touch_access()
+        # Recency (the list's order) is the user's: a message from another
+        # agent or a host-injected notice does not move the row.
+        text = (prompt or "").lstrip()
+        if text.startswith("[from agent") or is_synthetic_turn(text):
+            self._notify_session_list()
+        else:
+            self.touch_access()
         query_gen = self.turn.begin_query()
         self._injected_turn = False
         self.query_count += 1
@@ -1170,7 +1176,7 @@ class Session:
         self.turn.end_live(_expected_gen)
         self._set_turn_phase("idle")
         self._stamp_idle_clock()
-        self.touch_access()
+        self._notify_session_list()     # a turn ending is not the user's access
         self._fire_turn_end("success")
         self.scheduler.call_later(100, self._enter_input_if_idle)
 
@@ -2407,7 +2413,7 @@ class Session:
             getattr(self, "_self_wake_idle_gen", 0) or 0) + 1
         self._set_turn_phase("idle")
         self._stamp_idle_clock()
-        self.touch_access()
+        self._notify_session_list()
         injected = bool(self._injected_turn)
         self._injected_turn = False
         if injected:
@@ -2447,7 +2453,7 @@ class Session:
         self._user_cancelled_turn = False
         self._pending_leftover_end = False
         self._injected_turn = True
-        self.touch_access()
+        self._notify_session_list()     # the runtime's turn, not the user's
         self.turn.resume_stream()
         self._clear_error_halt()
         # Whatever the user was typing comes back in the sticky composer.

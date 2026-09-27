@@ -417,13 +417,6 @@
         ]
     },
     {
-        "keys": ["v"],
-        "command": "submarine_session_list_reveal",
-        "context": [
-            { "key": "setting.submarine_session_list", "operator": "equal", "operand": true }
-        ]
-    },
-    {
         "keys": ["s"],
         "command": "submarine_session_list_star",
         "context": [
