@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from typing import Any, Dict
 
@@ -29,3 +30,25 @@ def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
         else:
             result[key] = value
     return result
+
+
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def buffer_safe(text: str) -> str:
+    """Text Sublime can hold: each lone surrogate becomes one U+FFFD.
+
+    A stray byte decoded with `surrogateescape` (0xb3 → U+DCB3), or an emoji
+    cut in half by a UTF-16 truncation, reaches the buffer as invalid UTF-8.
+    From then on every read that spans it (`view.substr`) raises
+    UnicodeDecodeError: a clear, a repaint, the next streamed delta. One
+    character for one keeps the length, so offsets taken from the model
+    still match the buffer.
+    """
+    if not isinstance(text, str):
+        return text
+    try:
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        return _SURROGATE.sub("\ufffd", text)

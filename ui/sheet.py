@@ -17,6 +17,8 @@ from plat.constants import (
     STATUS_WAKE,
 )
 
+from plat.util import buffer_safe
+
 from . import keys
 from .models import strip_title_decoration
 from .session_api import abbrev_for, backend_theme, get_session_for_view
@@ -294,6 +296,7 @@ class OutputSheet:
         self.view.set_read_only(False)
         if pos is None:
             pos = self.view.size()
+        text = buffer_safe(text)
         self.view.run_command(keys.CMD_INSERT, {"pos": pos, "text": text})
         self.finish_buffer_edit()
         return pos + len(text)
@@ -303,6 +306,7 @@ class OutputSheet:
         if not self._has_view():
             return end
         self.view.set_read_only(False)
+        text = buffer_safe(text)
         self.view.run_command(keys.CMD_REPLACE, {
             "start": start, "end": end, "text": text,
         })
