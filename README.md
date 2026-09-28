@@ -240,7 +240,7 @@ All commands available via Command Palette (`Cmd+Shift+P`): type "Submarine"
 | Manage Auto-Allowed Tools… | - | Configure tools that skip permission prompts |
 | Reset Input Mode | - | Re-enter the sticky ◎ composer |
 | Queue Prompt… | - | Queue a prompt while a turn is running |
-| Send Now (cancel turn) | `Cmd+Enter` | Cancel the in-flight turn and send now (`Ctrl+Enter` too) |
+| Send Now | `Cmd+Enter` | Claude: steer into the running turn. Grok/Kimi: cancel it and send (`Ctrl+Enter` too) |
 | Show Session History… | - | Browse saved history |
 | Show Usage | - | Show usage / cost |
 | Show / Edit / Clear Retain Content | - | Session retain file |
@@ -262,11 +262,15 @@ prompts directly:
 
 - **Enter** — Submit prompt (or wake a sleeping session)
 - **Shift+Enter** — Insert newline (multiline prompts)
-- **Cmd+Enter** / **Ctrl+Enter** — Send now (cancel in-flight turn + send). When
-  `submit_with_modifier` is on, this is also the submit key and Enter inserts a
-  newline
-- **Alt+Enter** — Queue while busy (idle = normal submit). Queued messages
-  sit as `⏳` chips above ◎ with **✎** (pull it back into the composer to
+- **Cmd+Enter** / **Ctrl+Enter** — Send now. On a working Claude session the
+  message goes into the running turn: the agent reads it at its next step, and
+  `↪ …` marks where it landed (📎 text goes with it; images wait as their own
+  turn). Grok and Kimi can't take a message mid-turn, so there it cancels the
+  turn and sends. When `submit_with_modifier` is on, this is also the submit
+  key and Enter inserts a newline
+- **Alt+Enter** — Queue while busy (idle = normal submit). Every backend
+  queues the same way: the message waits for the turn to end and becomes its
+  own turn. Queued messages sit as `⏳` chips above ◎ with **✎** (pull it back into the composer to
   change it), **↵** (send now) and **×** (drop)
 - **@** — Open context menu (browse files, or clear pending context)
 - **Cmd+K** — Clear older rounds, keep last turn

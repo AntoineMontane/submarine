@@ -122,7 +122,7 @@ class SubmarineSubmitInputCommand(sublime_plugin.TextCommand):
                 and not _caret_outside_composer(self.view, s.output)
             )
             if not in_composer:
-                s.send_now("")
+                s.steer_now("")
                 return
 
         if not s.output.is_input_mode():
@@ -148,7 +148,7 @@ class SubmarineSubmitInputCommand(sublime_plugin.TextCommand):
             return
         if not text:
             if send_now and s.working and s._queued_prompts:
-                s.send_now("")
+                s.steer_now("")
             return
         s.is_looping = False
         s.next_wake_at = None
@@ -160,7 +160,7 @@ class SubmarineSubmitInputCommand(sublime_plugin.TextCommand):
             return
         if s.working:
             if send_now:
-                s.send_now(text)
+                s.steer_now(text)
             else:
                 s.queue_prompt(text)
             try:

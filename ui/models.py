@@ -160,6 +160,22 @@ class ToolCall:
 
 
 @dataclass
+class SteerNote:
+    """A message sent into the running turn (Claude, send-now): `↪ …`.
+
+    The agent reads it at its next step; the row marks where it landed.
+    """
+    text: str
+
+    def line(self) -> str:
+        first = next((ln.strip() for ln in (self.text or "").splitlines()
+                      if ln.strip()), "")
+        if len(first) > 120:
+            first = first[:119] + "…"
+        return "  ↪ %s\n" % first
+
+
+@dataclass
 class ArtifactCard:
     """Compact transcript row for an artifact write/edit.
 

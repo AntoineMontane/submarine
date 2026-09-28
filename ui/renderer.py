@@ -23,6 +23,7 @@ from .models import (
     GoalState,
     HISTORY_CAP,
     PENDING,
+    SteerNote,
     ToolCall,
     _goal_is_open,
     _open_todos,
@@ -573,6 +574,17 @@ class TurnRenderer:
                 "tool_error", (name,), {"result": result, "tool_id": tool_id})
             self._patch_tool_symbol(target, old_status)
 
+    def steer_note(self, text):
+        """`↪ …` in the running turn: a message sent into it mid-turn."""
+        if not self.current and not self._revive_for_output():
+            return
+        if not (text or "").strip():
+            return
+        self._mark_buffer_dirty("steer_note", (text,))
+        self.current.events.append(SteerNote(text=str(text)))
+        self._struct_dirty = True
+        self._render_current()
+
     def artifact_card(self, path, name, bytes=0, summary="", title=None):
         """Append a transcript artifact card. Viewless: records event, no chrome.
 
@@ -1103,7 +1115,7 @@ class TurnRenderer:
                     continue
                 if isinstance(event, ToolCall) and not is_host_control_tool(event.name):
                     lines.append(format_tool_row(self.owner, event))
-                elif isinstance(event, ArtifactCard):
+                elif isinstance(event, (ArtifactCard, SteerNote)):
                     line = event.line()
                     lines.append(line if line.endswith("\n") else line + "\n")
                 i += 1
@@ -1619,7 +1631,7 @@ class TurnRenderer:
                 continue
             if isinstance(event, ToolCall) and not is_host_control_tool(event.name):
                 parts.append(format_tool_row(self.owner, event))
-            elif isinstance(event, ArtifactCard):
+            elif isinstance(event, (ArtifactCard, SteerNote)):
                 line = event.line()
                 parts.append(line if line.endswith("\n") else line + "\n")
             i += 1
@@ -2679,7 +2691,7 @@ class TurnRenderer:
 
 _REPLAYABLE = frozenset((
     "prompt", "text", "tool", "tool_done", "tool_error",
-    "artifact_card",
+    "artifact_card", "steer_note",
     "meta", "interrupted", "apply_plan_todos", "set_retry_hint",
     "clear", "clear_keep_last", "reset_active_states",
 ))
@@ -2707,7 +2719,7 @@ def _clone_conv(conv):
                 result=e.result,
                 id=e.id,
             ))
-        elif isinstance(e, ArtifactCard):
+        elif isinstance(e, (ArtifactCard, SteerNote)):
             events.append(replace(e))
         else:
             events.append(e)

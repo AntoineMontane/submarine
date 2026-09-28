@@ -113,11 +113,9 @@ class TestSubsessionCompletionRow(unittest.TestCase):
                                      wake_prompt="Review the report, then verify.")
         reg.fire_subsession_waits(child, result_summary="## Report\n" + "x" * 500)
         self.assertEqual(parent.chrome.queues[-1], ["📬 opus-assistant finished"])
-        # The inject was sent mid-turn; simulate the bridge saying idle so it
-        # fires as its own turn when this one closes.
+        # Queued, not injected: it fires as its own turn when this one closes.
         inj = [c for c in parent.client.sent if c[0] == "inject_message"]
-        self.assertEqual(len(inj), 1)
-        inj[0][2]({"result": {"status": "idle"}})
+        self.assertEqual(inj, [])
         self.assertIn("## Report", parent._queued_prompts[0])
         parent._on_done({"status": "complete"}, _expected_gen=parent.turn.gen)
         self.assertEqual(parent.output.prompts[-1][0], "📬 opus-assistant finished")

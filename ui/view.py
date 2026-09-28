@@ -693,6 +693,10 @@ class SubmarineOutputView(FormatHelpers):
         """Append assistant text. Viewless: records events, no buffer write."""
         self.renderer.text(content)
 
+    def steer_note(self, text):
+        """`↪ …` where a mid-turn message landed. Viewless: records the event."""
+        self.renderer.steer_note(text)
+
     def artifact_card(self, path, name, bytes=0, summary="", title=None):
         """Append an artifact card. Viewless: records event, chrome when bound."""
         self.renderer.artifact_card(

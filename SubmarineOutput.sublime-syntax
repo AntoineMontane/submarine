@@ -68,6 +68,13 @@ contexts:
       scope: submarine.input.sep comment.line
       pop: true
 
+    # A message sent into the running turn (send-now steering): `↪ …`, in
+    # the prompt's colour — it is something you said.
+    - match: '^  (↪) (.*)$'
+      captures:
+        1: submarine.prompt.marker punctuation.definition.prompt.begin
+        2: submarine.prompt
+
     # A compaction inside the turn: @done's look, but the turn goes on.
     - match: '^\s*@compact\(.*\)$'
       scope: submarine.meta.done comment.line

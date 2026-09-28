@@ -1202,7 +1202,7 @@ class Session:
         # type: (str) -> None
         href = href or ""
         if href == "send_now":
-            self.send_now("")
+            self.steer_now("")
             return
         if href.startswith("send:"):
             try:
@@ -1212,7 +1212,7 @@ class Session:
             q = self._queued_prompts
             if 0 <= idx < len(q):
                 msg = q.pop(idx)
-                self.send_now(msg)
+                self.steer_now(msg)
             return
         if href.startswith("edit:"):
             try:
@@ -1287,29 +1287,12 @@ class Session:
         if display:
             self._queued_display[prompt] = str(display)
         self._update_queue_phantom()
-        # A turn that is being cancelled must not receive the message: an
-        # inject into it either dies with the turn or surfaces one round late.
-        # It stays queued and fires as its own turn when the ACK lands. Only
-        # the cancel window counts (Esc → bridge ACK): _interrupting and
-        # _interrupt_stream outlive the ACK (leftover-stream bookkeeping),
-        # and gating on them blocked every later inject.
+        # Every backend: a message sent while the agent works waits for the
+        # turn to end and becomes its own turn. Steering into the running
+        # turn is the explicit send-now (`steer_now`).
         if getattr(self.turn, "kind", "") == "interrupting":
             return
         if self.working and self.client and getattr(self.client, "is_alive", lambda: True)():
-            if self.backend == "claude" and prompt in self._queued_prompts:
-                def _on_inj(r, p=prompt):
-                    if not isinstance(r, dict) or r.get("error"):
-                        return
-                    res = r.get("result") if isinstance(r.get("result"), dict) else {}
-                    if res.get("status") in ("ok", "queued"):
-                        try:
-                            self._queued_prompts.remove(p)
-                        except ValueError:
-                            pass
-                        if res.get("status") == "queued":
-                            self._inject_pending = True
-                        self._update_queue_phantom()
-                self._send("inject_message", {"message": prompt}, _on_inj)
             return
         if self.client and getattr(self.client, "is_alive", lambda: True)():
             if prompt in self._queued_prompts:
@@ -1319,6 +1302,77 @@ class Session:
                     pass
                 self._fire_queued_now(prompt)
             return
+
+    def can_steer(self):
+        # type: () -> bool
+        """A message can go into the running turn (Claude's streaming input).
+
+        Not while it is being cancelled: an inject then dies with the turn or
+        surfaces one round late.
+        """
+        return bool(
+            self.backend == "claude" and self.working and self.client
+            and getattr(self.client, "is_alive", lambda: True)()
+            and getattr(self.turn, "kind", "") != "interrupting")
+
+    def steer_now(self, prompt=""):
+        # type: (str) -> bool
+        """Send-now from the UI: into the running turn where the backend can
+        take it (Claude), else interrupt and send (`send_now`).
+
+        With no prompt, the first queued message goes. The agent reads it at
+        its next step; `↪ …` marks the place in the turn.
+        """
+        prompt = (prompt or "").strip()
+        if not self.can_steer():
+            return self.send_now(prompt)
+        if prompt:
+            self._queued_prompts = [p for p in self._queued_prompts if p != prompt]
+            self._bind_context_to_queued(prompt)     # the composer's 📎
+        elif self._queued_prompts:
+            prompt = self._queued_prompts[0]
+        else:
+            return False
+        meta = (getattr(self, "_queued_ctx", None) or {}).get(prompt) or {}
+        if meta.get("images"):
+            # inject_message carries text only: an image goes as its own turn.
+            if prompt not in self._queued_prompts:
+                self._queued_prompts.insert(0, prompt)
+            self._update_queue_phantom()
+            self.chrome.set_status("images can't join a running turn — queued")
+            return False
+        if prompt in self._queued_prompts:
+            self._queued_prompts.remove(prompt)
+        (getattr(self, "_queued_ctx", None) or {}).pop(prompt, None)
+        display = self._queued_display.pop(prompt, None) or prompt
+        message = meta.get("full") or prompt
+        self._update_queue_phantom()
+
+        def _on_inj(r, p=prompt, shown=display, m=meta):
+            res = r.get("result") if isinstance(r, dict) and isinstance(r.get("result"), dict) else {}
+            status = res.get("status")
+            if isinstance(r, dict) and not r.get("error") and status in ("ok", "queued"):
+                if status == "queued":
+                    self._inject_pending = True
+                note = getattr(self.output, "steer_note", None)
+                if callable(note):
+                    note(shown)
+                return
+            # The turn ended before the message got in: it is an ordinary
+            # queued prompt again, first in line, with its context.
+            if p not in self._queued_prompts:
+                self._queued_prompts.insert(0, p)
+            if shown != p:
+                self._queued_display[p] = shown
+            if m:
+                self._queued_ctx = getattr(self, "_queued_ctx", None) or {}
+                self._queued_ctx[p] = m
+            self._update_queue_phantom()
+            if not self.working:
+                self._fire_next_queued()
+
+        self._send("inject_message", {"message": message}, _on_inj)
+        return True
 
     def send_now(self, prompt=""):
         # type: (str) -> bool

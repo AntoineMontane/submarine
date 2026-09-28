@@ -76,6 +76,7 @@ class DictPersist:
 class FakeOutput:
     def __init__(self):
         self.prompts = []  # type: list
+        self.steers = []  # type: list
         self.tools = []  # type: list
         self.done = []  # type: list
         self.errors = []  # type: list
@@ -274,6 +275,9 @@ class FakeOutput:
 
     def set_pending_context(self, context_items):
         self.pending_context = list(context_items or [])
+
+    def steer_note(self, text):
+        self.steers.append(text)
 
     def artifact_card(self, path, name, bytes=0, summary="", title=None):
         self.artifact_cards.append({

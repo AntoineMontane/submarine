@@ -77,9 +77,20 @@ class TestQueuePhantomNavigate(unittest.TestCase):
 
     def test_send_now_header_cancels_and_sends_top(self):
         s = self._busy()
+        s.backend = "grok"
         s._on_queue_phantom_navigate("send_now")
         self.assertTrue(s._send_now_pending or s.turn.kind == "interrupting"
                         or s._interrupting)
+
+    def test_send_now_header_steers_a_claude_turn(self):
+        s = self._busy()
+        s.backend = "claude"
+        s._on_queue_phantom_navigate("send_now")
+        inj = [(m, p) for m, p, _cb in s.client.sent if m == "inject_message"]
+        self.assertEqual(inj, [("inject_message", {"message": "one"})])
+        self.assertEqual(s._queued_prompts, ["two"])
+        self.assertFalse(s._send_now_pending)
+        self.assertNotEqual(s.turn.kind, "interrupting")
 
     def test_update_paints_via_chrome(self):
         s = make_session()
@@ -172,11 +183,32 @@ class TestQueueAfterInterrupt(unittest.TestCase):
         self.assertEqual(queries[-1], "after the cancel", "queued message not sent after the ACK")
         self.assertEqual(s._queued_prompts, [])
 
-    def test_a_normal_mid_turn_message_is_still_injected(self):
+    def test_a_mid_turn_message_queues_like_every_backend(self):
         s, client = self._session()
         s.query("first")
         s.queue_prompt("meanwhile")
-        self.assertEqual([m for m, _p, _cb in client.sent if m == "inject_message"], ["inject_message"])
+        self.assertEqual([m for m, _p, _cb in client.sent if m == "inject_message"], [])
+        self.assertEqual(s._queued_prompts, ["meanwhile"])
+
+    def test_send_now_steers_into_the_turn_and_marks_it(self):
+        s, client = self._session()
+        s.query("first")
+        self.assertTrue(s.steer_now("look at b.py too"))
+        _m, p, cb = [c for c in client.sent if c[0] == "inject_message"][-1]
+        self.assertEqual(p, {"message": "look at b.py too"})
+        cb({"result": {"status": "ok"}})
+        self.assertEqual(s.output.steers, ["look at b.py too"])
+        self.assertEqual(s._queued_prompts, [])
+
+    def test_a_steer_that_misses_the_turn_goes_first_in_the_queue(self):
+        s, client = self._session()
+        s.query("first")
+        s.queue_prompt("later")
+        s.steer_now("urgent")
+        _m, _p, cb = [c for c in client.sent if c[0] == "inject_message"][-1]
+        cb({"result": {"status": "idle"}})
+        self.assertEqual(s._queued_prompts, ["urgent", "later"])
+        self.assertEqual(s.output.steers, [])
 
     def test_queued_message_is_the_only_turn_after_a_cancel(self):
         """Esc kills background jobs; their completions used to start a
@@ -210,7 +242,7 @@ class TestQueueAfterInterrupt(unittest.TestCase):
         self.assertFalse(s.working)
         s.query("second")                       # a fresh turn after the cancel
         self.assertTrue(s.working)
-        s.queue_prompt("mid-turn note")
+        s.steer_now("mid-turn note")
         self.assertEqual([m for m, _p, _cb in client.sent if m == "inject_message"], ["inject_message"])
 
     def test_resumed_leftover_stream_still_takes_injects(self):
@@ -222,6 +254,24 @@ class TestQueueAfterInterrupt(unittest.TestCase):
         s.scheduler.fire_all()
         s._resume_interrupt_stream()             # leftover text keeps the turn alive, no query()
         self.assertTrue(s.working)
-        s.queue_prompt("while it streams")
+        s.steer_now("while it streams")
         self.assertEqual([m for m, _p, _cb in client.sent if m == "inject_message"], ["inject_message"])
 
+
+
+class TestSteerRow(unittest.TestCase):
+    def test_the_row_is_the_first_line_under_an_arrow(self):
+        from ui.models import SteerNote
+        self.assertEqual(SteerNote("\n  check b.py\nand c.py").line(), "  ↪ check b.py\n")
+
+    def test_the_turn_projects_it_where_it_landed(self):
+        from ui.models import Conversation, SteerNote
+        from ui.renderer import TurnRenderer
+
+        class _Owner(object):
+            view = None
+        r = TurnRenderer(_Owner())
+        conv = Conversation(prompt="go", working=False)
+        conv.events = ["Reading a.py\n", SteerNote("check b.py too"), "Now b.py\n"]
+        body = r.conversation_body(conv)
+        self.assertIn("Reading a.py\n  ↪ check b.py too\nNow b.py\n", body)
