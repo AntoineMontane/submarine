@@ -227,6 +227,9 @@ class SubmarineOutputView(FormatHelpers):
             self._drop_phantom_set_refs()
         if v is not None:
             self.renderer.restore_stashed_regions()
+            # A clean attach puts the buffer back without a repaint: the
+            # table hints (dropped with the phantom sets above) come back here.
+            self.renderer.schedule_table_refresh(delay=250)
 
     def _drop_phantom_set_refs(self) -> None:
         """PhantomSets are per-view; drop them so bind rebuilds against the new view."""

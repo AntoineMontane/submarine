@@ -76,6 +76,19 @@ class PlaceTest(unittest.TestCase):
         self.assertGreater(placed[1].start, placed[0].end)
         self.assertTrue(content[:placed[1].end].endswith("| 会話 | 12 |"))
 
+    def test_a_stale_turn_region_does_not_hide_a_table(self):
+        content = "◎ q ▶\n\n" + DOC
+        placed = place_tables(content, [(DOC, True, len(content) + 50)])
+        self.assertEqual(len(placed), 1)
+
+    def test_an_empty_corner_cell_is_a_table(self):
+        lines = ["", "| | Player | Camera |", "|---|---|---|",
+                 "| **Play (PIE)** | spawned | game camera |",
+                 "| **Possess / Eject** | switch | |", "", "After."]
+        (t,) = find_tables(lines)
+        self.assertEqual(t.header, ["", "Player", "Camera"])
+        self.assertEqual(t.rows[1], ["**Possess / Eject**", "switch", ""])
+
 
 if __name__ == "__main__":
     unittest.main()

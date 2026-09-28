@@ -400,6 +400,8 @@ def place_tables(content: str, blocks: List[Tuple[str, bool, int]]) -> List[Plac
         for t in find_tables(lines, final=final):
             raw = "\n".join(lines[t.first:t.last + 1])
             at = content.find(raw, max(pos, lower or 0))
+            if at < 0 and (lower or 0) > pos:
+                at = content.find(raw, pos)     # a stale turn region
             if at < 0:
                 continue
             out.append(Placed(t, at, at + len(raw)))
