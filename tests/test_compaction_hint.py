@@ -49,6 +49,19 @@ class BridgeCompactionTest(unittest.TestCase):
         self.assertEqual(self.sent[1]["data"]["message"],
                          "Context compacted: 404k → 11k tokens in 44s")
 
+    def test_a_load_replay_does_not_repeat_old_compactions(self):
+        """session/load replays every past compaction before its result."""
+        b = self._bridge()
+        b._loading_session = True
+        b._handle_compaction("auto_compact_completed", {
+            "tokens_before": 249137, "tokens_after": 6076})
+        b._handle_compaction("auto_compact_started", {"percentage": 80})
+        self.assertEqual(self.sent, [])
+        b._loading_session = False
+        b._handle_compaction("auto_compact_completed", {
+            "tokens_before": 400929, "tokens_after": 10529, "elapsed_ms": 55001})
+        self.assertEqual(len(self.sent), 1)
+
     def test_a_silent_prompt_is_reported_once(self):
         b = self._bridge()
         b.SILENCE_HINT_S = 0.01

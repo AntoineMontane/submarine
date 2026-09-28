@@ -760,6 +760,11 @@ class UpdatesMixin:
 
     def _handle_compaction(self, kind: str, upd: dict) -> None:
         """Grok auto-compaction → a live hint while it runs, a note after."""
+        # session/load replays every past compaction of the conversation
+        # (all of them arrive before the load result): history, not news.
+        if getattr(self, "_loading_session", False):
+            self.file_log(f"load replay compaction skipped: {kind}")
+            return
         if kind == "auto_compact_started":
             self.file_log(f"compaction started: {upd}")
             send_notification("message", {
