@@ -40,7 +40,8 @@ contexts:
       scope: keyword.working.session-list
       push: row_rest_working
 
-    # ⚙ background tasks outlived the turn: still busy, styled as working.
+    # ⚙ background tasks outlived the turn: the agent is idle, its tasks run
+    # (`task`, not `busy`). Styled as working.
     - match: '^⚙'
       scope: keyword.working.session-list
       push: row_rest_working
@@ -271,7 +272,7 @@ contexts:
       scope: keyword.star.session-list
     - match: '\s+\d+q\b'
       scope: comment.nq.session-list
-    - match: '\s+(busy)\s*$'
+    - match: '\s+(busy|task)\s*$'
       scope: keyword.working.session-list
       pop: true
     - match: '\s+(wait)\s*$'

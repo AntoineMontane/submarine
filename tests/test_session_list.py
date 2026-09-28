@@ -1228,6 +1228,9 @@ class TestRenderSessionList(unittest.TestCase):
         self.assertLess(sl._LIVE_BAND["input"], sl._LIVE_BAND["unread"])
         self.assertEqual(
             sl._stamp_of({"kind": "live", "status": "error"}), "err")
+        # Background tasks alone are not the agent at work.
+        self.assertEqual(sl._stamp_of({"kind": "live", "status": "bg"}), "task")
+        self.assertEqual(sl._stamp_of({"kind": "live", "status": "working"}), "busy")
         asking = types.SimpleNamespace(
             is_sleeping=False, working=False, unread=False, _compacting=False,
             error_halted=True,

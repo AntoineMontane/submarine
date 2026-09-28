@@ -748,7 +748,8 @@ def history_cap() -> int:
 # 4 letters so the state column is a fixed width.
 _STAMP = {
     "working": "busy",
-    "bg": "busy",
+    # The agent is idle; its background tasks run (a server, a long build).
+    "bg": "task",
     "ready": "idle",
     "input": "wait",
     "unread": "new",
