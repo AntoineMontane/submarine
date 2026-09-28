@@ -48,3 +48,29 @@ class TestMediaPreview(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClaudeReadImageTest(unittest.TestCase):
+    """Claude reads images with plain Read: same phantom as ACP media tools."""
+
+    def _tool(self, path, name="Read"):
+        from ui.models import ToolCall
+        t = ToolCall(name=name, tool_input={"file_path": path})
+        t.status = "done"
+        t.result = "[image]"
+        return t
+
+    def test_read_of_an_image_is_media(self):
+        from ui.formatters import is_media_tool
+        self.assertTrue(is_media_tool(self._tool("/tmp/eb_game_prev.png")))
+        self.assertFalse(is_media_tool(self._tool("/tmp/notes.md")))
+        self.assertTrue(is_media_tool(self._tool("/tmp/x.txt", name="read_image")))
+
+    def test_the_row_says_image_not_lines(self):
+        from ui.formatters import _read
+
+        class _V(object):
+            def _format_read_result(self, result):
+                return " → 1 lines"
+        self.assertEqual(_read(_V(), self._tool("/tmp/eb_game_prev.png")),
+                         ": /tmp/eb_game_prev.png → image")

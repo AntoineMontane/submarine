@@ -149,6 +149,23 @@ def is_image_path(path: str) -> bool:
     return bool(path) and path.lower().endswith(IMAGE_EXTS)
 
 
+def _read_input_path(tool) -> str:
+    inp = tool.tool_input if isinstance(tool.tool_input, dict) else {}
+    return str(inp.get("file_path") or inp.get("path") or inp.get("target_file") or "")
+
+
+def is_media_tool(tool) -> bool:
+    """A media tool by name, or Claude's `Read` of an image file.
+
+    Claude reads images with the plain Read tool; ACP agents come through a
+    media tool name. Both get the image phantom.
+    """
+    name = getattr(tool, "name", "") or ""
+    if is_media_tool_name(name):
+        return True
+    return name == "Read" and is_image_path(_read_input_path(tool))
+
+
 def is_video_path(path: str) -> bool:
     return bool(path) and path.lower().endswith(VIDEO_EXTS)
 
@@ -314,7 +331,9 @@ def _read(view, tool) -> str:
     path = inp.get("file_path") or inp.get("path") or inp.get("target_file") or ""
     out = (": %s" % path) if path else ""
     if tool.result and tool.status == "done":
-        if path and os.path.isdir(path):
+        if is_image_path(path):
+            out += " → image"           # the phantom under the row shows it
+        elif path and os.path.isdir(path):
             out += view._format_glob_result(tool.result)
         else:
             out += view._format_read_result(tool.result)

@@ -11,7 +11,7 @@ from plat.constants import TOOL_STATUS_SYMBOLS
 from .formatters import (
     extract_media_path,
     format_tool_detail,
-    is_media_tool_name,
+    is_media_tool,
     _read_image_path,
 )
 from .models import (
@@ -314,7 +314,7 @@ def parse_task_result_lines(result: str) -> list:
 
 
 def stash_media_path(tool: ToolCall, result: Optional[str], cwd: Optional[str]) -> None:
-    if not is_media_tool_name(tool.name):
+    if not is_media_tool(tool):
         return
     path = extract_media_path(result, tool.tool_input, cwd=cwd)
     if not path and isinstance(tool.tool_input, dict):

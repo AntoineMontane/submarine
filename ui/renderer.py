@@ -2167,7 +2167,7 @@ class TurnRenderer:
         view = self.owner.view
         if not view or not view.is_valid() or sublime is None:
             return
-        from .formatters import is_image_path, is_media_tool_name, media_display_path
+        from .formatters import is_image_path, is_media_tool, media_display_path
         if (self._media_phantom_set is None
                 or getattr(self, "_media_phantom_view_id", None) != view.id()):
             try:
@@ -2180,7 +2180,7 @@ class TurnRenderer:
                 [self.current] if self.current is not None else []):
             for event in conv.events:
                 if (isinstance(event, ToolCall)
-                        and is_media_tool_name(event.name)
+                        and is_media_tool(event)
                         and event.status == DONE):
                     media_tools.append(event)
         if not media_tools:
