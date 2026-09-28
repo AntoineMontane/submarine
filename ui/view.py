@@ -241,6 +241,7 @@ class SubmarineOutputView(FormatHelpers):
         r._media_phantom_set = None
         r._turn_context_phantom_set = None
         r._artifact_phantom_set = None
+        r._table_phantom_set = None
 
     def surface_save(self) -> dict:
         """Snapshot per-session chrome. Viewless: return last snapshot unchanged."""
@@ -1122,6 +1123,8 @@ class SubmarineOutputView(FormatHelpers):
                 self.composer._pad_phantom_set.update([])
             if self.renderer._media_phantom_set is not None:
                 self.renderer._media_phantom_set.update([])
+            if self.renderer._table_phantom_set is not None:
+                self.renderer._table_phantom_set.update([])
         except Exception:
             pass
         if not self._has_view():

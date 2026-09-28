@@ -949,6 +949,21 @@ class SubmarineOutputEventListener(sublime_plugin.ViewEventListener):
             settings.get(keys.OUTPUT, False) or settings.get("claude_output", False)
         )
 
+    def on_hover(self, point, hover_zone):
+        """A markdown table under the pointer: pop it up laid out."""
+        if sublime is None or hover_zone != sublime.HOVER_TEXT:
+            return
+        s = get_session_for_view(self.view)
+        output = getattr(s, "output", None) if s else None
+        renderer = getattr(output, "renderer", None)
+        bound = getattr(output, "view", None)
+        if renderer is None or bound is None or bound.id() != self.view.id():
+            return
+        try:
+            renderer.show_table_popup(point)
+        except Exception as e:
+            print("[Submarine] table hover: %s" % e)
+
     def on_activated(self):
         window = self.view.window()
         if not window:

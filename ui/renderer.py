@@ -88,6 +88,8 @@ class TurnRenderer:
         self._media_anchor = {}
         self._turn_context_phantom_set = None
         self._artifact_phantom_set = None
+        self._table_phantom_set = None
+        self._table_refresh_token = 0
         self._tasks_expanded = False
         self._region_stash = None  # type: Optional[tuple]
         self._dirty = 0
@@ -1248,6 +1250,7 @@ class TurnRenderer:
             self.owner.sheet.set_hidden_region(keys.CONV_REGION, cur_start, end)
         self._region_stash = None
         self._reset_proj()
+        self.schedule_table_refresh()
 
     def clear(self, keep_supportive=True):
         """Clear the transcript. Viewless: drops conversations, no buffer write."""
@@ -2063,6 +2066,7 @@ class TurnRenderer:
             if sublime is not None:
                 sublime.set_timeout(self._refresh_media_phantoms, 10)
                 sublime.set_timeout(self._refresh_artifact_phantoms, 10)
+            self.schedule_table_refresh()
         try:
             s = get_session_for_view(view)
             if s and getattr(s, "_wakeup_armed", None) and s._wakeup_armed():
@@ -2568,6 +2572,109 @@ class TurnRenderer:
             self._artifact_phantom_set.update(phantoms)
         except Exception:
             pass
+
+    # ── Markdown tables: a `⊞ table R×C …` hint, a popup on hover ─────────
+
+    def placed_tables(self):
+        """Complete tables in the assistant text, located in the buffer."""
+        view = self.owner.view
+        if not view or not view.is_valid() or sublime is None:
+            return []
+        from .md_table import place_tables
+        convs = list(self.conversations)
+        if self.current is not None:
+            convs.append(self.current)
+        blocks = []
+        for conv in convs:
+            region = getattr(conv, "region", None)
+            lower = region[0] if region else 0
+            evs = conv.events
+            i, n = 0, len(evs)
+            while i < n:
+                if not isinstance(evs[i], str):
+                    i += 1
+                    continue
+                j = i
+                while j < n and isinstance(evs[j], str):
+                    j += 1
+                # The tail of a turn still streaming may grow: its last
+                # table is not complete until another line follows it.
+                final = not (conv is self.current and conv.working and j == n)
+                blocks.append(("".join(evs[i:j]), final, lower))
+                i = j
+        if not blocks:
+            return []
+        return place_tables(view.substr(_R(0, view.size())), blocks)
+
+    def schedule_table_refresh(self, delay=120):
+        if sublime is None:
+            return
+        self._table_refresh_token += 1
+        tok = self._table_refresh_token
+
+        def run():
+            if tok == self._table_refresh_token:
+                self._refresh_table_phantoms()
+        sublime.set_timeout(run, delay)
+
+    def _refresh_table_phantoms(self):
+        view = self.owner.view
+        if not view or not view.is_valid() or sublime is None:
+            return
+        if (self._table_phantom_set is None
+                or getattr(self, "_table_phantom_view_id", None) != view.id()):
+            try:
+                self._table_phantom_set = sublime.PhantomSet(view, keys.PHANTOM_TABLE)
+                self._table_phantom_view_id = view.id()
+            except Exception:
+                return
+        from .md_table import hint_html
+        phantoms = []
+        for k, p in enumerate(self.placed_tables()):
+            # A block phantom at the end of the line above draws between that
+            # line and the table. The sheet never starts with a table.
+            if p.start <= 0:
+                continue
+            try:
+                phantoms.append(sublime.Phantom(
+                    _R(p.start - 1, p.start - 1),
+                    hint_html(p.table, "table:%d" % p.start),
+                    sublime.LAYOUT_BLOCK,
+                    lambda href: self._on_table_href(href)))
+            except Exception:
+                pass
+        try:
+            self._table_phantom_set.update(phantoms)
+        except Exception:
+            pass
+
+    def _on_table_href(self, href):
+        if not href.startswith("table:"):
+            return
+        try:
+            start = int(href.split(":", 1)[1])
+        except ValueError:
+            return
+        self.show_table_popup(start)
+
+    def show_table_popup(self, point):
+        """Popup for the table covering `point`. True when one was shown."""
+        view = self.owner.view
+        if not view or not view.is_valid() or sublime is None:
+            return False
+        for p in self.placed_tables():
+            if p.start <= point <= p.end:
+                from .md_table import measure_view, table_html
+                ext = view.viewport_extent()
+                budget = max(200.0, ext[0] - 4 * (view.em_width() or 8.0))
+                body = table_html(p.table, budget, measure_view(view, p.start, p.end))
+                try:
+                    view.show_popup(body, sublime.HIDE_ON_MOUSE_MOVE_AWAY, p.start,
+                                    max_width=int(ext[0]), max_height=int(ext[1] * 0.7))
+                except Exception as e:
+                    print("[Submarine] table popup: %s" % e)
+                return True
+        return False
 
 
 _REPLAYABLE = frozenset((
