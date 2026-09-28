@@ -395,7 +395,7 @@ class TestInitErrorDropsClient(unittest.TestCase):
         # The existing error surface is kept.
         self.assertTrue(s.error_halted)
         self.assertIn("timed out", s.error_halt_message)
-        self.assertTrue(any("Failed to connect" in t for t in s.output.texts))
+        self.assertTrue(any("@error(failed to connect" in t for t in s.output.texts))
 
     def test_a_dead_bridge_is_reaped_at_once(self):
         class _Dead(FakeClient):

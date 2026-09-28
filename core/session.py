@@ -38,6 +38,7 @@ from .rewind import RewindService, is_synthetic_turn
 from .turn import (
     _SELF_WAKE_BACKENDS,
     TurnController,
+    format_error_line,
     is_compact_prompt,
 )
 
@@ -808,7 +809,7 @@ class Session:
             self._mark_error_halt(error_msg)
             self.chrome.set_status("error")
             try:
-                self.output.text("\n*Failed to connect: %s*\n" % error_msg)
+                self.output.text(format_error_line("failed to connect: %s" % error_msg))
             except Exception:
                 pass
             self.turn.end_live()
@@ -1019,7 +1020,7 @@ class Session:
             self._set_turn_phase("idle")
             self._mark_error_halt("bridge died")
             try:
-                self.output.text("\n\n*Failed to send query. Bridge process died.*\n")
+                self.output.text(format_error_line("query not sent: the bridge process died"))
             except Exception:
                 pass
             return
@@ -1119,7 +1120,7 @@ class Session:
             log_plugin("query error [backend=%s]: %s" % (self.backend, error_msg))
             self._mark_error_halt(error_msg)
             try:
-                self.output.text("\n\n*Error: %s*\n" % error_msg)
+                self.output.text(format_error_line(error_msg))
             except Exception:
                 pass
 
@@ -2284,7 +2285,7 @@ class Session:
         self.chrome.refresh_tab_title()
         if timeout:
             try:
-                self.output.text("\n*Compaction timed out (host) — check agent.*\n")
+                self.output.text(format_error_line("compaction timed out — check the agent"))
             except Exception:
                 pass
         self._fire_turn_end("compact")

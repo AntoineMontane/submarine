@@ -19,6 +19,14 @@ contexts:
     - match: '^\s*@session\(.*\)$'
       scope: submarine.meta.done comment.line
 
+    # A context compaction, in the @done form.
+    - match: '^\s*@compact\(.*\)$'
+      scope: submarine.meta.done comment.line
+
+    # A failure, in the @done form but red (the failed-tool color).
+    - match: '^\s*⚠ @error\(.*\)$'
+      scope: submarine.tool.error
+
     # A turn the runtime started (a background task finished, a wake):
     # `⚙ label ▷` at column 0 — not a prompt, so not the prompt style. Tool
     # rows are indented, so they never match here. Same fold marker as ◎.
@@ -59,6 +67,14 @@ contexts:
     - match: '^[┄─━-]{8,}\s*$'
       scope: submarine.input.sep comment.line
       pop: true
+
+    # A compaction inside the turn: @done's look, but the turn goes on.
+    - match: '^\s*@compact\(.*\)$'
+      scope: submarine.meta.done comment.line
+
+    # A failure, in the @done form but red (the failed-tool color).
+    - match: '^\s*⚠ @error\(.*\)$'
+      scope: submarine.tool.error
 
     # Done tag ends the conversation. `.*` not `[^)]+` — provider labels
     # like `(CC) DeepSeek/step-5-preview` contain parentheses.

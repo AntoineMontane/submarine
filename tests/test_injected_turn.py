@@ -107,7 +107,7 @@ class AdoptedTurnTest(unittest.TestCase):
         s.events.dispatch("injected_turn", {"origin": "task-notification"})
         s.events.result(_result(is_error=True, stop_reason="error"))
         self.assertFalse(s.working)
-        self.assertTrue(any("turn failed" in t for t in s.output.texts))
+        self.assertTrue(any("⚠ @error(turn failed" in t for t in s.output.texts))
 
     def test_a_permission_request_during_the_runtime_turn_is_shown(self):
         """After a resume the session drops leftover asking state until the

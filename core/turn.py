@@ -262,6 +262,12 @@ def looks_like_compact_start(text: str) -> bool:
     )
 
 
+def format_error_line(message: str) -> str:
+    """`  ⚠ @error(…)` — a failure in the sheet, in the @done form (red)."""
+    msg = " ".join(str(message or "").split()).rstrip(".") or "error"
+    return "\n  ⚠ @error(%s)\n" % msg
+
+
 def looks_like_compact_blocked(text: str) -> bool:
     """Kimi's `compaction.blocked` local chunk. It fires for a second
     trigger while its own compaction of this turn is already running."""

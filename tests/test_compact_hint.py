@@ -21,7 +21,7 @@ class TestCompactPhrases(unittest.TestCase):
         self.assertIn("compacting conversation context", src.lower())
         with open(os.path.join(_ROOT, "core", "events.py"), encoding="utf-8") as f:
             src = f.read()
-        self.assertIn("*Compacting conversation context…*", src)
+        self.assertIn("@compact(started)", src)
 
     def test_kimi_auto_done(self):
         msg = (

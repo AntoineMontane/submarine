@@ -6,12 +6,15 @@ Handlers call OutputPort / ChromePort / TurnController / BackgroundTaskGate.
 """
 from __future__ import annotations
 
+import re
+
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
 from .background import is_shell_background_tool
 from .turn import (
     _SELF_WAKE_BACKENDS,
     looks_like_compact_done,
+    format_error_line,
     looks_like_compact_blocked,
     looks_like_compact_start,
 )
@@ -36,6 +39,30 @@ def _k_tokens(n):
     except (TypeError, ValueError):
         return "?"
     return "%dk" % round(n / 1000.0) if n >= 1000 else str(n)
+
+
+def _compact_line(started=False, before=None, after=None, elapsed_ms=None,
+                  done_text=""):
+    """`  @compact(…)` — a compaction in the turn, in the @done form (and
+    highlight): `started`, `404k → 11k tokens, 44s`, or `done`."""
+    if started:
+        return "\n  @compact(started)\n"
+    if done_text and not (before or after):
+        # Kimi: "Compaction completed. … Tokens before: 98,000 … after: 12,000"
+        def _num(label):
+            m = re.search(r"%s[^0-9]*([0-9][0-9,]*)" % label, done_text, re.I)
+            return int(m.group(1).replace(",", "")) if m else None
+        before = _num("tokens before")
+        after = _num("tokens after")
+    parts = []
+    if before or after:
+        parts.append("%s → %s tokens" % (_k_tokens(before), _k_tokens(after)))
+    try:
+        if elapsed_ms:
+            parts.append("%ds" % round(int(elapsed_ms) / 1000.0))
+    except (TypeError, ValueError):
+        pass
+    return "\n  @compact(%s)\n" % (", ".join(parts) or "done")
 
 
 def _compaction_hint(data):
@@ -449,7 +476,7 @@ class BridgeEventRouter:
             if self.turn.busy and self.on_phase is not None:
                 self.on_phase("responding")
             try:
-                self.output.text("\n*Compaction completed.*\n")
+                self.output.text(_compact_line(done_text=text))
             except Exception:
                 pass
             if self.on_compact_done is not None:
@@ -465,16 +492,15 @@ class BridgeEventRouter:
             if self.turn.busy and self.on_compact_start is not None:
                 self.on_compact_start()
             try:
-                self.output.text("\n*Compacting conversation context…*\n")
+                self.output.text(_compact_line(started=True))
             except Exception:
                 pass
-            self._set_live_hint("⟳ compacting context — the agent summarizes "
-                                "its history before answering")
+            self._set_live_hint("⟳ compacting context")
             return
         if looks_like_compact_done(text):
             self._clear_api_retry_hint()
             try:
-                self.output.text("\n*Compaction completed.*\n")
+                self.output.text(_compact_line(done_text=text))
             except Exception:
                 pass
             if compacting and self.on_compact_done is not None:
@@ -761,7 +787,7 @@ class BridgeEventRouter:
                 pass
             msg = "turn failed (%s)" % stop
             try:
-                self.output.text("\n\n*⚠ %s.*\n" % msg)
+                self.output.text(format_error_line(msg))
             except Exception:
                 pass
             if self.on_error is not None:
@@ -819,6 +845,15 @@ class BridgeEventRouter:
             self._set_live_hint(_compaction_hint(data))
         elif subtype == "agent_silent":
             self._set_live_hint(self._silence_hint(data))
+        elif subtype == "compaction" and isinstance(data, dict) and (
+                data.get("tokens_before") or data.get("tokens_after")):
+            self._clear_api_retry_hint()
+            try:
+                self.output.text(_compact_line(
+                    before=data.get("tokens_before"), after=data.get("tokens_after"),
+                    elapsed_ms=data.get("elapsed_ms")))
+            except Exception:
+                pass
         elif subtype in ("error", "init", "compaction"):
             if subtype == "compaction":
                 self._clear_api_retry_hint()
@@ -829,7 +864,8 @@ class BridgeEventRouter:
                 msg = data
             if msg:
                 try:
-                    self.output.text("\n*%s*\n" % msg)
+                    self.output.text(format_error_line(msg) if subtype == "error"
+                                     else "\n*%s*\n" % msg)
                 except Exception:
                     pass
             if subtype == "error" and msg and self.on_error is not None:

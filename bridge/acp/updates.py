@@ -790,6 +790,7 @@ class UpdatesMixin:
                     _k_tokens(before), _k_tokens(after), took),
                 "tokens_before": before,
                 "tokens_after": after,
+                "elapsed_ms": ms,
             },
         })
 

@@ -85,8 +85,11 @@ class HostHintTest(unittest.TestCase):
         self._system(s, "compaction_started",
                      {"tokens_used": 403518, "context_window": 500000, "percentage": 81})
         self.assertEqual(out.retry_hints[-1], "⟳ compacting context · 81% of 500k")
-        self._system(s, "compaction", {"message": "Context compacted: 404k → 11k tokens in 44s"})
+        self._system(s, "compaction", {"message": "Context compacted: 404k → 11k tokens in 44s",
+                                       "tokens_before": 403518, "tokens_after": 10634,
+                                       "elapsed_ms": 43911})
         self.assertEqual(out.retry_hints[-1], "")
+        self.assertEqual(out.texts[-1].strip(), "@compact(404k → 11k tokens, 44s)")
 
     def test_silence_near_the_window_names_compaction(self):
         s, out = self._session()
@@ -128,7 +131,7 @@ class KimiCompactionTest(HostHintTest):
         s, out = self._session()
         s.backend = s.events.backend = "kimi"
         self._text(s, "Compacting conversation context…")
-        self.assertEqual(out.texts[-1].strip(), "*Compacting conversation context…*")
+        self.assertEqual(out.texts[-1].strip(), "@compact(started)")
         self.assertTrue(out.retry_hints[-1].startswith("⟳ compacting context"))
         self._text(s, "Compaction is blocked by the current turn; retry when the turn is idle.")
         self.assertNotIn("blocked", "".join(out.texts))
@@ -141,6 +144,21 @@ class KimiCompactionTest(HostHintTest):
         s, out = self._session()
         self._text(s, "Compaction is blocked by the current turn; retry when the turn is idle.")
         self.assertIn("blocked", "".join(out.texts))
+
+
+class CompactLineTest(unittest.TestCase):
+    def test_kimi_done_text_gives_its_numbers(self):
+        from core.events import _compact_line
+        done = "Compaction completed.\n- Messages compacted: 1,204\n- Tokens before: 98,000\n- Tokens after: 12,500\n"
+        self.assertEqual(_compact_line(done_text=done).strip(), "@compact(98k → 12k tokens)")
+        self.assertEqual(_compact_line(done_text="Compaction completed.").strip(), "@compact(done)")
+        self.assertEqual(_compact_line(started=True).strip(), "@compact(started)")
+
+    def test_the_line_has_the_done_highlight(self):
+        syn = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "SubmarineOutput.sublime-syntax"), encoding="utf-8").read()
+        self.assertGreaterEqual(syn.count("^\\s*@compact\\(.*\\)$"), 2,
+                                "top level and inside a turn")
 
 
 if __name__ == "__main__":
