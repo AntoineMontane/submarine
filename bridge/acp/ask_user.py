@@ -194,6 +194,25 @@ class AskUserMixin:
             content[key] = matched or label
         return content
 
+    async def _ask_question_ui(self, questions: list):
+        """Show the host's question modal; the answers, or None if dismissed."""
+        self.question_id += 1
+        qid = self.question_id
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+        self.pending_questions[qid] = fut
+        send_notification("question_request", {
+            "id": qid,
+            "questions": questions,
+        })
+        try:
+            return await fut
+        except Exception as e:
+            self.file_log(f"ask_user permission cancelled: {e}")
+            return None
+        finally:
+            self.pending_questions.pop(qid, None)
+
     async def _handle_acp_ask_user_permission(
             self, tool_call: dict, options: list,
             tool_input: dict) -> dict:
@@ -238,22 +257,7 @@ class AskUserMixin:
                 "multiSelect": False,
             }]
 
-        self.question_id += 1
-        qid = self.question_id
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future = loop.create_future()
-        self.pending_questions[qid] = fut
-        send_notification("question_request", {
-            "id": qid,
-            "questions": questions,
-        })
-        try:
-            answers = await fut
-        except Exception as e:
-            self.file_log(f"ask_user permission cancelled: {e}")
-            answers = None
-        finally:
-            self.pending_questions.pop(qid, None)
+        answers = await self._ask_question_ui(questions)
 
         skip_id = next(
             (o.get("optionId") for o in (options or [])

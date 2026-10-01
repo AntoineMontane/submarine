@@ -104,11 +104,126 @@ class TestKimiStaticWiring(unittest.TestCase):
         self.assertIn("AcpBridge", src)
         self.assertIn("agent_argv", src)
         self.assertIn("acp", src)
-        self.assertIn("stdio_http_mcp", src)
-        self.assertIn('"type": "http"', src)
+        # The HTTP wrap is shared (Antigravity takes MCP over HTTP only too).
+        self.assertIn("HttpMcpMixin", src)
+        with open(os.path.join(root, "bridge", "acp", "http_mcp.py")) as f:
+            shared = f.read()
+        self.assertIn("stdio_http_mcp", shared)
+        self.assertIn('"type": "http"', shared)
         self.assertNotIn('bridge_script="main.py"', src)
         self.assertNotIn("install_kimi_stdio_mcp", src)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AntigravityBridgeTest(unittest.TestCase):
+    """antigravity-acp tool updates → our formatters (shapes from a live run)."""
+
+    def _bridge(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for p in (os.path.join(root, "bridge"), root):
+            if p not in sys.path:
+                sys.path.insert(0, p)
+        import antigravity_main
+        return antigravity_main.AntigravityBridge()
+
+    def test_tool_titles(self):
+        b = self._bridge()
+        cases = {
+            ("Running find_file", "search"): "Glob",
+            ("Running view_file", "read"): "Read",
+            ("pwd && ls -la", "execute"): "Bash",
+            ("Running grep_search", "search"): "Grep",
+            ("Running browser_get_dom", "other"): "browser_get_dom",
+        }
+        ask = {"toolCallId": "interaction_1", "title": "What is your favorite color?"}
+        self.assertEqual(b._normalize_tool_name(ask), "AskUserQuestion")
+        self.assertEqual(b._tool_input_from_update(ask, "AskUserQuestion")["question"],
+                         "What is your favorite color?")
+        for (title, kind), want in cases.items():
+            self.assertEqual(b._normalize_tool_name({"title": title, "kind": kind}), want)
+
+    def test_tool_inputs(self):
+        b = self._bridge()
+        self.assertEqual(b._normalize_tool_input(
+            {"CommandLine": "ls", "Cwd": "/w"}, "Bash")["command"], "ls")
+        self.assertEqual(b._normalize_tool_input(
+            {"absolute_path": "/w/a.txt"}, "Read")["file_path"], "/w/a.txt")
+        self.assertEqual(b._normalize_tool_input(
+            {"directory_path": "/w", "query": "*note*"}, "Glob")["pattern"], "*note*")
+
+    def test_client_fs_is_off_and_modes_map(self):
+        b = self._bridge()
+        self.assertFalse(b.CLIENT_FS)
+        self.assertEqual(b.PERM_TO_MODE["acceptEdits"], "auto_edit")
+        self.assertEqual(b.PERM_TO_MODE["bypassPermissions"], "yolo")
+
+
+class AntigravityAskTest(unittest.TestCase):
+    """Antigravity's ask tool: a request_permission whose options are the
+    answers (shapes from a live session). It was cancelled without UI."""
+
+    PARAMS = {
+        "sessionId": "s",
+        "toolCall": {"toolCallId": "interaction_c8446eb2", "status": "pending",
+                     "title": "What is your favorite color?", "rawInput": {}},
+        "options": [
+            {"optionId": "1", "name": "(Recommended) Blue", "kind": "allow_once"},
+            {"optionId": "2", "name": "Green", "kind": "allow_once"},
+        ],
+    }
+
+    def _run(self, answers):
+        import asyncio
+        b = AntigravityBridgeTest._bridge(self)
+        shown = []
+
+        async def ui(questions):
+            shown.append(questions)
+            return answers
+        b._ask_question_ui = ui
+        out = asyncio.run(b._acp_request_permission(self.PARAMS))
+        return b, shown, out
+
+    def test_the_question_is_shown_and_a_pick_selects_its_option(self):
+        b, shown, out = self._run({"What is your favorite color?": "Green"})
+        (q,), = shown
+        self.assertEqual(q["question"], "What is your favorite color?")
+        self.assertEqual([o["label"] for o in q["options"]], ["Blue", "Green"])
+        self.assertEqual(q["options"][0]["description"], "Recommended")
+        self.assertEqual(out, {"outcome": {"outcome": "selected", "optionId": "2"}})
+
+    def test_free_text_cancels_and_follows_up(self):
+        b, _shown, out = self._run({"What is your favorite color?": "teal, really"})
+        self.assertEqual(out, {"outcome": {"outcome": "cancelled"}})
+        self.assertIn("teal, really", b._pending_ask_followup)
+        self.assertIn("What is your favorite color?", b._pending_ask_followup)
+
+    def test_dismissed_cancels(self):
+        _b, _shown, out = self._run(None)
+        self.assertEqual(out, {"outcome": {"outcome": "cancelled"}})
+
+
+class ApplyModelSkipTest(unittest.TestCase):
+    """No set_model for the model the session already runs (Antigravity
+    restarts its agent session on each one); a real change still goes out."""
+
+    def test_skip_and_send(self):
+        import asyncio
+        b = AntigravityBridgeTest._bridge(self)
+        sent = []
+
+        async def fake(method, params, **kw):
+            sent.append((method, params.get("modelId")))
+            return {}
+        b._send_acp = fake
+        b.session_id = "s"
+        b._agent_model = "gemini-3.8-flash-high"
+        b.model = "gemini-3.8-flash-high"
+        self.assertTrue(asyncio.run(b.apply_model()))
+        self.assertEqual(sent, [])
+        b.model = "gemini-3.8-flash-low"
+        asyncio.run(b.apply_model())
+        self.assertEqual(sent, [("session/set_model", "gemini-3.8-flash-low")])

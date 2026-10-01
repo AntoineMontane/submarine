@@ -16,6 +16,7 @@ import shutil
 from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Tuple
 
+from . import antigravity as antigravity_backend
 from . import grok as grok_backend
 from . import kimi as kimi_backend
 from . import providers as provider_mod
@@ -43,6 +44,11 @@ def _codex_available():
 def _grok_available():
     # type: () -> bool
     return grok_backend.grok_available()
+
+
+def _antigravity_available():
+    # type: () -> bool
+    return antigravity_backend.antigravity_available()
 
 
 def _kimi_available():
@@ -133,6 +139,17 @@ BACKENDS = {
         fallback_model="kimi-code/k3",
         default_models=list(kimi_backend.KIMI_MODELS),
         available=_kimi_available,
+        pinned=True,
+    ),
+    # Google's official ACP server; signs in with the Google account.
+    "antigravity": BackendSpec(
+        name="antigravity",
+        label="Antigravity",
+        abbrev="AG",
+        bridge_script="antigravity_main.py",
+        fallback_model="gemini-3.8-flash-high",
+        default_models=list(antigravity_backend.ANTIGRAVITY_MODELS),
+        available=_antigravity_available,
         pinned=True,
     ),
     "grok": BackendSpec(

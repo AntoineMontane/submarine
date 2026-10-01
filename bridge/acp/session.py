@@ -58,9 +58,14 @@ class SessionMixin:
             self.log(f"model {requested!r} is not offered by the agent; "
                      f"staying on {self.model}")
             return False
+        params = self.set_model_params()
+        if running and requested == running and set(params) <= {"sessionId", "modelId"}:
+            # Already on it: Antigravity restarts its agent session on every
+            # set_model (~0.6s of each start). Effort riding along (Grok)
+            # still goes out.
+            return True
         try:
-            result = await self._send_acp(
-                "session/set_model", self.set_model_params()) or {}
+            result = await self._send_acp("session/set_model", params) or {}
             # Grok: {_meta: {model: {Ok: id}}} ; others may return currentModelId
             current = result.get("currentModelId")
             if not current:
@@ -324,8 +329,9 @@ class SessionMixin:
             # kimi-code 0.36: AskUser Q1+ only via elicitation/create.
             # request_permission handleQuestion drops every question after q0.
             client_caps: Dict[str, Any] = {
-                "fs": {"readTextFile": True, "writeTextFile": True},
-                "terminal": True,
+                "fs": {"readTextFile": self.CLIENT_FS,
+                       "writeTextFile": self.CLIENT_FS},
+                "terminal": self.CLIENT_TERMINAL,
             }
             if getattr(self, "BACKEND_NAME", "") == "kimi":
                 client_caps["elicitation"] = {"form": {}}

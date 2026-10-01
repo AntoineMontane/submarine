@@ -16,6 +16,7 @@ sys.path.insert(0, _BRIDGE_DIR)
 sys.path.insert(0, _PLUGIN_DIR)
 
 from acp_base import AcpBridge, run_bridge  # noqa: E402
+from acp.http_mcp import HttpMcpMixin  # noqa: E402
 from kimi_bg import KimiBgMixin  # noqa: E402
 from rpc_helpers import send_notification, send_result  # noqa: E402
 
@@ -44,7 +45,7 @@ except ImportError:
         return (model or default).strip() or default
 
 
-class KimiBridge(KimiBgMixin, AcpBridge):
+class KimiBridge(KimiBgMixin, HttpMcpMixin, AcpBridge):
     BACKEND_NAME = "kimi"
     DEFAULT_MODEL = "kimi-code/k3"  # matches kimi default_model / ACP currentValue
     # Do NOT always cancel before every prompt (spams session/cancel and races
@@ -157,49 +158,6 @@ class KimiBridge(KimiBgMixin, AcpBridge):
         if "launching" in title and "agent" in title:
             return False
         return super()._is_subagent_spawn(tool_name, upd, tool_input)
-
-    def _collect_mcp_servers(self) -> list:
-        """ACP session/new mcpServers. Docs: http/stdio/sse.
-
-        0.37.2 throws on stdio relay (runtime identity). Sandbox: type=http
-        session/new succeeds. Wrap our stdio MCP as localhost HTTP.
-        Identity is --agent-id= (never --view-id=).
-        """
-        cached = getattr(self, "_kimi_http_mcp_servers", None)
-        if cached is not None:
-            return cached
-        stdio = AcpBridge._collect_mcp_servers(self)
-        try:
-            from stdio_http_mcp import start_stdio_http_mcp, acp_stdio_env
-        except ImportError:
-            from .stdio_http_mcp import start_stdio_http_mcp, acp_stdio_env
-        out = []
-        held = []
-        for s in stdio:
-            if not isinstance(s, dict) or not s.get("command"):
-                continue
-            name = s.get("name") or "mcp"
-            try:
-                env = acp_stdio_env(s)
-                if getattr(self, "_agent_id", None):
-                    env.setdefault("SUBMARINE_AGENT_ID", str(self._agent_id))
-                url, httpd = start_stdio_http_mcp(
-                    s["command"], list(s.get("args") or []),
-                    env,
-                )
-                held.append(httpd)
-                out.append({
-                    "name": name,
-                    "type": "http",
-                    "url": url,
-                    "headers": [],
-                })
-                self.file_log(f"kimi MCP http wrap {name} → {url}")
-            except Exception as e:
-                self.file_log(f"kimi MCP http wrap {name}: {e}")
-        self._http_mcp_httpd = held
-        self._kimi_http_mcp_servers = out
-        return out
 
     def normalize_model(self, model: Optional[str]) -> str:
         return _kimi_normalize_model(model, default=self.DEFAULT_MODEL)

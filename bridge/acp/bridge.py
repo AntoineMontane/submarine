@@ -69,6 +69,10 @@ class AcpBridge(TransportMixin, SessionMixin, UpdatesMixin,
     MODE_TO_PERM: Dict[str, str] = {}
 
     MODEL_ALIASES: Dict[str, str] = {}
+    # Client capabilities offered at initialize (fs/* and terminal/* served
+    # by this bridge). An agent that mishandles one turns it off.
+    CLIENT_FS: bool = True
+    CLIENT_TERMINAL: bool = True
 
     def __init__(self) -> None:
         super().__init__()

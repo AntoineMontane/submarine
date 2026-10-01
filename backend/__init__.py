@@ -1,5 +1,5 @@
 """L2 backend: JSON-RPC client, specs, providers, grok/kimi helpers. Sublime-free."""
-from . import grok, kimi, providers, rpc, specs
+from . import antigravity, grok, kimi, providers, rpc, specs
 from .rpc import JsonRpcClient
 from .specs import (
     BackendSpec,

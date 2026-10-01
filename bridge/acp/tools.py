@@ -50,6 +50,14 @@ INPUT_KEY_MAP = {
     "replaceAll": "replace_all",
     "target_directory": "pattern",   # list_dir → Glob expects pattern
     "targetDirectory": "pattern",
+    # Antigravity (antigravity-acp): run_command / view_file arguments.
+    "CommandLine": "command",
+    "command_line": "command",
+    "commandLine": "command",
+    "AbsolutePath": "file_path",
+    "absolute_path": "file_path",
+    "directory_path": "path",
+    "DirectoryPath": "path",
 }
 
 
@@ -388,7 +396,8 @@ class ToolsMixin:
             out[INPUT_KEY_MAP.get(k, k)] = v
         # list_dir / Glob: pattern is the display field for Claude Glob formatter
         if tool_name == "Glob" and not out.get("pattern"):
-            out["pattern"] = out.get("path") or out.get("file_path") or ""
+            out["pattern"] = (out.get("query") or out.get("path")
+                              or out.get("file_path") or "")
         # WebSearch-shaped tools: ensure query
         if tool_name == "WebSearch" and not out.get("query"):
             out["query"] = out.get("pattern") or out.get("q") or ""
