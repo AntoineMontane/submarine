@@ -253,7 +253,9 @@ All commands available via Command Palette (`Cmd+Shift+P`): type "Submarine"
 | Edit Output Settings | - | Edit `SubmarineOutput.sublime-settings` |
 
 Session list (when that scratch view is focused): `Enter` open, `r` rename,
-`v` reveal, `s` star, `j` / `Shift+J` JSONL, `Delete` / `Backspace` close.
+`s` star, `Shift+T` TODO (park the session in a TODO section on top of the
+list; again to take it out), `j` / `Shift+J` JSONL, `Delete` / `Backspace`
+close.
 
 ### Inline Input Mode
 

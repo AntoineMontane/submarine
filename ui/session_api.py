@@ -208,6 +208,22 @@ def save_bookmarks(starred, project_path=None, records=None) -> bool:
         return False
 
 
+def load_todos(project_path=None):
+    try:
+        from core.records import load_todos as _fn
+        return _fn(project_path)
+    except Exception:
+        return set()
+
+
+def save_todos(todo, project_path=None, records=None) -> bool:
+    try:
+        from core.records import save_todos as _fn
+        return bool(_fn(todo, project_path, records=records))
+    except Exception:
+        return False
+
+
 def load_bookmark_records(project_path=None):
     try:
         from core.records import load_bookmark_records as _fn

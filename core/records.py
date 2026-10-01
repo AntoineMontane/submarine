@@ -341,6 +341,31 @@ def load_bookmarks(project_path: Optional[str] = None) -> set:
     return set(load_bookmark_state(project_path).get("starred") or [])
 
 
+def load_todos(project_path: Optional[str] = None) -> set:
+    """Sessions marked TODO: parked to come back to, listed on top."""
+    return set(load_bookmark_state(project_path).get("todo") or [])
+
+
+def save_todos(todo: set, project_path: Optional[str] = None,
+               records: Optional[dict] = None) -> bool:
+    state = load_bookmark_state(project_path)
+    ids = set(todo or ())
+    if ids:
+        state["todo"] = sorted(ids)
+    else:
+        state.pop("todo", None)
+    rec = dict(state.get("records") or {})
+    if records is not None:
+        rec.update(records)
+    keep = ids | set(state.get("starred") or ())
+    rec = {k: v for k, v in rec.items() if k in keep}
+    if rec:
+        state["records"] = rec
+    else:
+        state.pop("records", None)
+    return save_bookmark_state(state, project_path)
+
+
 def load_bookmark_records(project_path: Optional[str] = None) -> dict:
     """id → snapshot so a starred row can list after sessions.json prune."""
     rec = load_bookmark_state(project_path).get("records") or {}
@@ -367,9 +392,15 @@ def save_bookmarks(
     rec = dict(state.get("records") or {})
     if records is not None:
         rec = dict(records)
+    # A TODO session keeps its snapshot too (it lists after a prune).
+    keep = ids | set(state.get("todo") or ())
+    old = state.get("records") or {}
     for k in list(rec):
-        if k not in ids:
+        if k not in keep:
             rec.pop(k, None)
+    for k in keep - set(rec):
+        if k in old:
+            rec[k] = old[k]
     if rec:
         state["records"] = rec
     else:
@@ -386,7 +417,7 @@ def remember_bookmark_record(
     if not session_id or not isinstance(record, dict):
         return
     state = load_bookmark_state(project_path)
-    starred = set(state.get("starred") or [])
+    starred = set(state.get("starred") or []) | set(state.get("todo") or [])
     if session_id not in starred:
         return
     recs = dict(state.get("records") or {})

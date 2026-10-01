@@ -14,7 +14,7 @@ contexts:
       scope: markup.heading.session-list
       push: header_rest
 
-    - match: '^(CURRENT|HISTORY)\s+\((\d+)\)'
+    - match: '^(TODO|CURRENT|HISTORY)\s+\((\d+)\)'
       captures:
         0: entity.name.section.session-list
         2: constant.numeric.session-list

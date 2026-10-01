@@ -30,6 +30,8 @@ from .session_api import (
     iter_sessions,
     load_bookmarks,
     load_bookmark_records,
+    load_todos,
+    save_todos,
     load_saved_sessions,
     place_in_last_session_split,
     register_session,
@@ -992,8 +994,9 @@ def _fmt_row(r: dict, starred: set, compact: bool = False, cols: int = 0) -> str
 
 def render_list(live: List[dict], here: List[dict], other: List[dict],
                 starred: Optional[set] = None,
-                cols: int = 0) -> Tuple[str, List[dict]]:
+                cols: int = 0, todo: Optional[set] = None) -> Tuple[str, List[dict]]:
     starred = starred or set()
+    todo = todo or set()
     compact = use_compact(cols)
     lines = [
         format_header(cols, live),
@@ -1001,7 +1004,7 @@ def render_list(live: List[dict], here: List[dict], other: List[dict],
     ]
     index: List[dict] = []
 
-    def add_section(title: str, rows: List[dict], fmt):
+    def add_section(title: str, rows: List[dict], fmt, homes=None):
         lines.append(f"{title} ({len(rows)})")
         if not rows:
             lines.append("  (none)")
@@ -1012,9 +1015,23 @@ def render_list(live: List[dict], here: List[dict], other: List[dict],
             rec = dict(r)
             rec["line"] = len(lines)  # 1-based
             rec["section"] = title
+            # Where the row lives when it is not parked: closing a TODO
+            # row does what closing it there would.
+            rec["home"] = (homes or {}).get(id(r), title)
             index.append(rec)
         lines.append("")
 
+    # TODO on top: sessions parked to come back to, out of the long lists.
+    def is_todo(r):
+        return any(x in todo for x in row_ids(r))
+
+    parked = [r for r in live if is_todo(r)] + [r for r in here if is_todo(r)]
+    if parked:
+        homes = {id(r): "CURRENT" for r in live}
+        homes.update({id(r): "HISTORY" for r in here})
+        add_section("TODO", parked, _fmt_row, homes)
+        live = [r for r in live if not is_todo(r)]
+        here = [r for r in here if not is_todo(r)]
     add_section("CURRENT", tree_order(live, starred), _fmt_row)
     add_section("HISTORY", tree_order(here, starred), _fmt_row)
     return "\n".join(lines).rstrip() + "\n", index
@@ -1025,6 +1042,7 @@ def build_for_window(window, cols: int = 0) -> Tuple[str, List[dict]]:
     if window and window.folders():
         cwd = window.folders()[0]
     starred = load_bookmarks(cwd or None)
+    todo = load_todos(cwd or None)
     # Unused live sheets stay in CURRENT so you can switch away; close drops
     # them. Empty HISTORY rows are still omitted (except starred).
     live = collect_live(window)
@@ -1046,9 +1064,9 @@ def build_for_window(window, cols: int = 0) -> Tuple[str, List[dict]]:
     have = set(live_ids)
     for r in here:
         have.update(row_ids(r))
-    here = _include_starred_saved(here, have, cwd, starred)
-    here = drop_empty_sessions(here, starred)
-    return render_list(live, here, [], starred, cols=cols)
+    here = _include_starred_saved(here, have, cwd, starred | todo)
+    here = drop_empty_sessions(here, starred | todo)
+    return render_list(live, here, [], starred, cols=cols, todo=todo)
 
 
 def _include_starred_saved(here: List[dict], live_ids: set, cwd: str,
@@ -1810,7 +1828,7 @@ def close_row(window, row: dict, remove: Optional[bool] = None) -> bool:
     if not row:
         return False
     if remove is None:
-        remove = row.get("section") == "HISTORY"
+        remove = (row.get("home") or row.get("section")) == "HISTORY"
     sid = row.get("session_id")
     if row.get("kind") == "live":
         session = _live_session_for_row(row)
@@ -2389,6 +2407,8 @@ class SessionListClickListener(sublime_plugin.EventListener):
             return ("submarine_session_list_rename", {})
         if ch == "s":
             return ("submarine_session_list_star", {})
+        if ch == "T":
+            return ("submarine_session_list_star", {"todo": True})
         if ch == "f":
             return ("submarine_session_list_fork", {})
         if ch == "t":
@@ -2510,6 +2530,7 @@ def list_state_key(window, cols: int):
     # snapshot (name, counts) shows on a row whose store entry was pruned.
     try:
         starred = tuple(sorted(load_bookmarks(cwd or None) or ()))
+        starred += ("todo:",) + tuple(sorted(load_todos(cwd or None) or ()))
     except Exception:
         starred = ()
     try:
@@ -3040,9 +3061,10 @@ class SubmarineSessionListJsonlCommand(sublime_plugin.TextCommand):
 
 
 class SubmarineSessionListStarCommand(sublime_plugin.TextCommand):
-    """Toggle bookmark for the session under the caret."""
+    """Toggle bookmark for the session under the caret; with `todo`, park
+    it in (or take it out of) the TODO section instead."""
 
-    def run(self, edit):
+    def run(self, edit, todo=False):
         if not self.view.settings().get(SETTING):
             return
         raw = self.view.settings().get(ROWS_KEY) or "[]"
@@ -3075,6 +3097,9 @@ class SubmarineSessionListStarCommand(sublime_plugin.TextCommand):
             "last_activity": row.get("last_activity"),
             "last_access": row.get("last_access"),
         }
+        if todo:
+            self._toggle_todo(win, row, sid, cwd, record)
+            return
         try:
             starred = set(load_bookmarks(cwd or None) or ())
         except Exception:
@@ -3100,6 +3125,27 @@ class SubmarineSessionListStarCommand(sublime_plugin.TextCommand):
         _place_caret_on_session(self.view, sid, kind=row.get("kind"))
         sublime.status_message(
             ("★ Starred: {}" if now else "☆ Unstarred: {}").format(name))
+
+    def _toggle_todo(self, win, row, sid, cwd, record):
+        try:
+            todo = set(load_todos(cwd or None) or ())
+        except Exception:
+            todo = set()
+        ids = row_ids(row)
+        parked = any(x in todo for x in ids)
+        recs = {}
+        for x in ids:
+            if parked:
+                todo.discard(x)
+            else:
+                todo.add(x)
+                recs[x] = dict(record)
+        save_todos(todo, cwd or None, records=recs)
+        name = (row.get("name") or "").strip() or sid
+        refresh_session_list(win)
+        _place_caret_on_session(self.view, sid, kind=row.get("kind"))
+        sublime.status_message(
+            ("☐ TODO: {}" if not parked else "Out of TODO: {}").format(name))
 
     def is_enabled(self):
         return bool(self.view.settings().get(SETTING))

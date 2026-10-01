@@ -424,6 +424,14 @@
         ]
     },
     {
+        "keys": ["shift+t"],
+        "command": "submarine_session_list_star",
+        "args": {"todo": true},
+        "context": [
+            { "key": "setting.submarine_session_list", "operator": "equal", "operand": true }
+        ]
+    },
+    {
         "keys": ["f"],
         "command": "submarine_session_list_fork",
         "context": [
