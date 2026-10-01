@@ -90,9 +90,11 @@ BACKENDS = {
             ("claude-fable-5-1", "Fable 5.1"),
             # The CLI's alias (claude 2.1.280+ maps it to claude-opus-5-5).
             ("opus", "Opus 5.5"),
-            ("sonnet", "Sonnet 5"),
+            # The CLI's alias: whichever Sonnet the installed claude maps it to.
+            ("sonnet", "Sonnet (latest)"),
             ("haiku", "Haiku 4.5"),
             ("claude-opus-5-5", "Opus 5.5 (pinned)"),
+            ("claude-sonnet-5-5", "Sonnet 5.5 (pinned, claude 2.1.284+)"),
             ("claude-opus-5", "Opus 5 (pinned)"),
             ("claude-sonnet-5", "Sonnet 5 (pinned)"),
             ("claude-fable-5", "Fable 5"),
@@ -112,6 +114,8 @@ BACKENDS = {
         theme="Packages/Submarine/SubmarineOutput-codex.hidden-tmTheme",
         default_models=[
             ("gpt-6-astra", "GPT-6 Astra"),
+            # Codex's own default since 0.159 ("latest workhorse").
+            ("gpt-6.1-sol", "GPT-6.1 Sol"),
             ("gpt-6-sol", "GPT-6 Sol"),
             ("gpt-6-luna", "GPT-6 Luna"),
             ("gpt-5.6-sol", "GPT-5.6 Sol"),
