@@ -1738,8 +1738,10 @@ class Session:
                 level or "(none)")
 
         def _commit():
+            old = self.effort
             self.effort_override = level
             self.effort = level
+            self.note_effort_change(old, level)
             stamp_identity(self.persist, **{STAMP_EFFORT: level})
             try:
                 self._save_session()
@@ -3100,6 +3102,22 @@ class Session:
         if not new or old == new:
             return
         text = ("model(%s → %s)" % (old, new)) if old else ("model(%s)" % new)
+        noted = False
+        try:
+            noted = bool(self.output.note(text))
+        except Exception:
+            noted = False
+        if not noted:
+            self._show_provider_banner()
+
+    def note_effort_change(self, old, new):
+        # type: (Optional[str], Optional[str]) -> None
+        """`@effort(high → xhigh)` where the change happened, like a model
+        switch; before the first turn the banner names the effort."""
+        old, new = str(old or "").strip(), str(new or "").strip()
+        if not new or old == new:
+            return
+        text = ("effort(%s → %s)" % (old, new)) if old else ("effort(%s)" % new)
         noted = False
         try:
             noted = bool(self.output.note(text))

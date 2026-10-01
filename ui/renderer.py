@@ -2698,8 +2698,8 @@ _REPLAYABLE = frozenset((
 
 
 def _note_lines(conv):
-    """`  @model(a → b)` lines under a turn's @done — the same form (and
-    highlight) as @done and @session."""
+    """`  @model(a → b)` / `  @effort(a → b)` lines under a turn's @done —
+    the same form (and highlight) as @done and @session."""
     return ["  @%s\n" % n for n in (getattr(conv, "notes", None) or []) if n]
 
 

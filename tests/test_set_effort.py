@@ -48,6 +48,32 @@ class SetEffortTest(unittest.TestCase):
         self.assertEqual(reports, [(True, "effort xhigh — live")])
         self.assertTrue(s.initialized, "no restart")
 
+    def test_the_change_is_noted_in_the_history(self):
+        s = self._session()
+        s.query("first")                           # a turn to note it under
+        s.output.notes = []
+        s.set_effort("xhigh")
+        (_params, cb), = _sent(s, "set_effort")
+        cb({"result": {"ok": True, "live": True, "applied": "xhigh"}})
+        self.assertEqual(s.output.notes, ["effort(high → xhigh)"])
+
+    def test_before_the_first_turn_the_banner_names_it(self):
+        s = self._session()
+        s.output.banners = []
+        s.set_effort("low")
+        (_params, cb), = _sent(s, "set_effort")
+        cb({"result": {"ok": True, "live": True, "applied": "low"}})
+        self.assertEqual(s.output.banners[-1][2], "low")
+
+    def test_a_refused_change_is_not_noted(self):
+        s = self._session()
+        s.query("first")
+        s.output.notes = []
+        s.set_effort("xhigh")
+        (_params, cb), = _sent(s, "set_effort")
+        cb({"result": {"ok": False, "live": False, "reason": "no"}})
+        self.assertEqual(s.output.notes, [], "refused mid-turn: nothing changed")
+
     def test_max_restarts_and_the_restart_carries_it(self):
         s = self._session()
         ok, detail = s.set_effort("max")

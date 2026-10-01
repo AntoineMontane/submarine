@@ -114,8 +114,8 @@ contexts:
     - match: '^\s*\(super\+click to collapse\)$'
       scope: submarine.task.more
 
-    # A change between turns (model switch), under the turn's @done.
-    - match: '^\s*@model\(.*\)$'
+    # A change between turns (model or effort), under the turn's @done.
+    - match: '^\s*@(model|effort)\(.*\)$'
       scope: submarine.meta.done comment.line
 
     # Tool pending
