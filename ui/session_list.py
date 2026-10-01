@@ -1569,7 +1569,10 @@ def reveal_row(window, row: dict, keep=None) -> bool:
                         # tail is still the point of revealing it.
                         ok = True
                     else:
-                        ok = bool(hv.attach(window, session, focus=True))
+                        # No focus: the host shows the session either way,
+                        # and a focus hop (then back to the list) took the
+                        # keyboard from a find panel searching the list.
+                        ok = bool(hv.attach(window, session, focus=False))
                     if ok:
                         reveal_tail_soon(session)
             if not ok:
