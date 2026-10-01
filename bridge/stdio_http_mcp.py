@@ -105,7 +105,13 @@ def start_stdio_http_mcp(command: str, args: list, env: Optional[dict] = None):
             self.wfile.write(payload)
 
         def do_GET(self):
-            self.send_response(200)
+            # Streamable HTTP: GET opens a server→client SSE stream, which
+            # this relay has none of. The spec's answer is 405; a bare 200
+            # (no type, no body) left strict clients — Antigravity's Go
+            # harness, the official Python client — "still connecting".
+            self.send_response(405)
+            self.send_header("Allow", "POST")
+            self.send_header("Content-Length", "0")
             self.end_headers()
 
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

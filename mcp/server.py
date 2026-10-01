@@ -326,7 +326,14 @@ def handle_request(request: dict) -> dict | None:
             "content": [{"type": "text", "text": text}],
         })
 
-    return None
+    if req_id is None:
+        return None          # an unknown notification needs no answer
+    # Every request gets an answer. A newer client opens with methods this
+    # server lacks (MCP 2026-07-28 `server/discover`, sent by Antigravity's
+    # harness) and falls back to `initialize` on "method not found"; with
+    # no reply it waited forever ("still connecting").
+    return {"jsonrpc": "2.0", "id": req_id,
+            "error": {"code": -32601, "message": "Method not found: %s" % method}}
 
 
 def main() -> None:
