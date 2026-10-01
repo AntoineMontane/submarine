@@ -69,9 +69,10 @@ def resolve_auth_token(
         env_token = os.environ.get(auth_env_var, "")
         if valid_auth_token(env_token):
             token = env_token
-    if not token and name == "deepseek":
+    if not token and (name == "deepseek" or auth_env_var == "DEEPSEEK_API_KEY"):
         # Legacy: old configs stored the key under top-level deepseek_api_key
-        # instead of custom_providers.deepseek.auth_env_var.
+        # instead of custom_providers.deepseek.auth_env_var. Any provider on
+        # DeepSeek's key (deepseek_flash) uses it too.
         legacy = ""
         if isinstance(settings, dict):
             legacy = (settings.get("deepseek_api_key") or "").strip()

@@ -117,6 +117,18 @@
             "subagent_model": "deepseek-v4-flash",
             "effort": "max"
         },
+        // DeepSeek V4 Flash in every slot: the fast, cheap alternative to the
+        // Pro provider above. Same endpoint and key.
+        "deepseek_flash": {
+            "label": "DeepSeek Flash",
+            "abbrev": "DF",
+            "base_url": "https://api.deepseek.com/anthropic",
+            "auth_env_var": "DEEPSEEK_API_KEY",
+            "opus_model": "deepseek-v4-flash",
+            "sonnet_model": "deepseek-v4-flash",
+            "haiku_model": "deepseek-v4-flash",
+            "subagent_model": "deepseek-v4-flash"
+        },
         // StepFun (step_plan Anthropic-compat). Token from $STEPFUN_API_KEY.
         "stepfun": {
             "label": "StepFun",
