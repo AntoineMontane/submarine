@@ -245,74 +245,119 @@ class ModalUI:
         self.drop_regions()
 
     def _stash_regions(self) -> None:
+        """Offsets of the modal blocks and buttons, with the text each one
+        covers: a restore checks the text before trusting the numbers."""
+        view = self.owner.view
+
+        def _text(span):
+            if not view or not span:
+                return None
+            try:
+                return view.substr(_R(span[0], span[1]))
+            except Exception:
+                return None
+
         stash = {}  # type: dict
-        if self.pending_permission:
-            stash["permission"] = (
-                self.pending_permission.region,
-                dict(self.pending_permission.button_regions),
-            )
-        if self.pending_plan:
-            stash["plan"] = (
-                self.pending_plan.region,
-                dict(self.pending_plan.button_regions),
-            )
-        if self.pending_question:
-            stash["question"] = (
-                self.pending_question.region,
-                dict(self.pending_question.button_regions),
-            )
+        for kind, obj in (("permission", self.pending_permission),
+                          ("plan", self.pending_plan),
+                          ("question", self.pending_question)):
+            if not obj:
+                continue
+            buttons = dict(obj.button_regions)
+            texts = {"": _text(obj.region)}
+            for btn, span in buttons.items():
+                texts[btn] = _text(span)
+            stash[kind] = (obj.region, buttons, texts)
         self._region_stash = stash or None
 
+    def _relocated(self, region, buttons, texts):
+        """(region, buttons) valid in the buffer as it is now, or None.
+
+        A "clean" attach rebuilds the sheet and re-applies the stashed
+        offsets; when the rebuilt text differs at all (a row that grew, a
+        spinner line) they point into the turn above: [Y] [N] [V] painted
+        over a tool row, and answering erased the wrong span.
+        """
+        view = self.owner.view
+        block = (texts or {}).get("")
+        if not view or not region or block is None:
+            return region, buttons
+        try:
+            if view.substr(_R(region[0], region[1])) == block:
+                return region, buttons
+            at = view.substr(_R(0, view.size())).rfind(block)
+        except Exception:
+            return None
+        if at < 0:
+            return None
+        delta = at - region[0]
+        moved = {btn: (bs + delta, be + delta) for btn, (bs, be) in buttons.items()}
+        return (at, at + len(block)), moved
+
     def restore_stashed_regions(self) -> None:
-        """Re-apply modal region tuples after an exact buffer restore."""
+        """Re-apply modal region tuples after a buffer restore — checked
+        against the text they covered, moved when the text moved, and the
+        block rebuilt when it is gone."""
         stash = self._region_stash
         if not stash:
             return
+        self._region_stash = None
         view = self.owner.view
+        rerender = []
         perm = self.pending_permission
         if perm and "permission" in stash:
-            region, buttons = stash["permission"]
-            perm.region = region
-            perm.button_regions = dict(buttons or {})
-            if view and region and sublime is not None:
-                try:
-                    self.owner.sheet.set_hidden_region(
-                        keys.PERM_BLOCK, region[0], region[1])
-                    for btn_type, (bs, be) in perm.button_regions.items():
-                        view.add_regions(
-                            "%s%s" % (keys.PERM_BTN_PREFIX, btn_type),
-                            [sublime.Region(bs, be)], "", "",
-                            getattr(sublime, "DRAW_NO_OUTLINE", 0),
-                        )
-                except Exception:
-                    pass
+            found = self._relocated(*stash["permission"])
+            if found is None:
+                rerender.append(self._render_permission)
+            else:
+                perm.region, perm.button_regions = found[0], dict(found[1] or {})
+                if view and perm.region and sublime is not None:
+                    try:
+                        self.owner.sheet.set_hidden_region(
+                            keys.PERM_BLOCK, perm.region[0], perm.region[1])
+                        for btn_type, (bs, be) in perm.button_regions.items():
+                            view.add_regions(
+                                "%s%s" % (keys.PERM_BTN_PREFIX, btn_type),
+                                [sublime.Region(bs, be)], "", "",
+                                getattr(sublime, "DRAW_NO_OUTLINE", 0),
+                            )
+                    except Exception:
+                        pass
         plan = self.pending_plan
         if plan and "plan" in stash:
-            region, buttons = stash["plan"]
-            plan.region = region
-            plan.button_regions = dict(buttons or {})
-            if view and region and sublime is not None:
-                try:
-                    self.owner.sheet.set_hidden_region(
-                        keys.PLAN_BLOCK, region[0], region[1])
-                    # Without these a switch back left [Y] [N] [V] dead to
-                    # the mouse (the keys still worked).
-                    self._paint_plan_buttons(plan)
-                except Exception:
-                    pass
+            found = self._relocated(*stash["plan"])
+            if found is None:
+                rerender.append(self._render_plan_approval)
+            else:
+                plan.region, plan.button_regions = found[0], dict(found[1] or {})
+                if view and plan.region and sublime is not None:
+                    try:
+                        self.owner.sheet.set_hidden_region(
+                            keys.PLAN_BLOCK, plan.region[0], plan.region[1])
+                        # Without these a switch back left [Y] [N] [V] dead
+                        # to the mouse (the keys still worked).
+                        self._paint_plan_buttons(plan)
+                    except Exception:
+                        pass
         q = self.pending_question
         if q and "question" in stash:
-            region, buttons = stash["question"]
-            q.region = region
-            q.button_regions = dict(buttons or {})
-            if view and region and sublime is not None:
-                try:
-                    self.owner.sheet.set_hidden_region(
-                        keys.QUESTION_BLOCK, region[0], region[1])
-                    self._paint_question_keys(region[0], region[1])
-                except Exception:
-                    pass
-        self._region_stash = None
+            found = self._relocated(*stash["question"])
+            if found is None:
+                rerender.append(self.render_question)
+            else:
+                q.region, q.button_regions = found[0], dict(found[1] or {})
+                if view and q.region and sublime is not None:
+                    try:
+                        self.owner.sheet.set_hidden_region(
+                            keys.QUESTION_BLOCK, q.region[0], q.region[1])
+                        self._paint_question_keys(q.region[0], q.region[1])
+                    except Exception:
+                        pass
+        for render in rerender:
+            try:
+                render()
+            except Exception:
+                pass
 
     def drop_regions(self) -> None:
         """Invalidate stored region tuples. Live request objects are kept."""

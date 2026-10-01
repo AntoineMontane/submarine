@@ -328,6 +328,41 @@ class TestModalDescriptor(unittest.TestCase):
         self.assertEqual(out2.modals.descriptors()[0]["kind"], "question")
         self.assertIsNone(out2.pending_question.region)
 
+    def test_restored_plan_buttons_follow_moved_text(self):
+        """A clean attach re-applies stashed offsets; when the rebuilt sheet
+        is not byte-identical they pointed into the turn above: [Y] [N] [V]
+        painted over a tool row, and answering erased the wrong span."""
+        from ui.models import PLAN_APPROVE, PLAN_VIEW
+        win = RecordingWindow()
+        out = SubmarineOutputView(win)
+        v = _bind(out, 1)
+        out.prompt("plan?")
+        out.plan_approval_request(1, "/tmp/plan.md", [], lambda *_: None)
+        out.modals._stash_regions()
+        v._content = "  ✔ Write: a row that grew → 41 lines\n" + v._content
+        out.modals.restore_stashed_regions()
+        plan = out.pending_plan
+        a, b = plan.button_regions[PLAN_APPROVE]
+        self.assertEqual(v._content[a:b], "[Y] Approve")
+        a, b = plan.button_regions[PLAN_VIEW]
+        self.assertEqual(v._content[a:b], "[V] View Plan")
+        a, b = plan.region
+        self.assertIn("Plan complete", v._content[a:b])
+
+    def test_a_restored_plan_block_that_is_gone_is_drawn_again(self):
+        win = RecordingWindow()
+        out = SubmarineOutputView(win)
+        v = _bind(out, 1)
+        out.prompt("plan?")
+        out.plan_approval_request(1, "/tmp/plan.md", [], lambda *_: None)
+        out.modals._stash_regions()
+        cut = v._content.find("\n  ⚙ Plan complete")
+        v._content = v._content[:cut]
+        out.modals.restore_stashed_regions()
+        self.assertEqual(v._content.count("Plan complete"), 1)
+        a, b = out.pending_plan.region
+        self.assertIn("Plan complete", v._content[a:b])
+
     def test_approving_plan_reopens_composer(self):
         win = RecordingWindow()
         out = SubmarineOutputView(win)
