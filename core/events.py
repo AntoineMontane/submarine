@@ -120,6 +120,7 @@ class BridgeEventRouter:
         on_error=None,  # type: Optional[Callable[[str], None]]
         on_loop=None,  # type: Optional[Callable[[Optional[float]], None]]
         on_plan_mode=None,  # type: Optional[Callable[[bool, Optional[str]], None]]
+        resolve_plan_file=None,  # type: Optional[Callable[[], str]]
         on_compact_start=None,  # type: Optional[Callable[[], None]]
         on_compact_done=None,  # type: Optional[Callable[[], None]]
         on_resume_stream=None,  # type: Optional[Callable[[], None]]
@@ -154,6 +155,7 @@ class BridgeEventRouter:
         self.on_error = on_error
         self.on_loop = on_loop
         self.on_plan_mode = on_plan_mode
+        self.resolve_plan_file = resolve_plan_file
         self.on_compact_start = on_compact_start
         self.on_compact_done = on_compact_done
         self.on_resume_stream = on_resume_stream
@@ -308,6 +310,13 @@ class BridgeEventRouter:
             or tool_input.get("plan_file")
             or ""
         )
+        if not plan_file and self.resolve_plan_file is not None:
+            # Claude Code 2.1.284 may call ExitPlanMode with no input at all:
+            # no plan text, no path. The file is still where the CLI wrote it.
+            try:
+                plan_file = self.resolve_plan_file() or ""
+            except Exception:
+                plan_file = ""
         allowed_prompts = tool_input.get("allowedPrompts") or []
         if self.on_plan_mode is not None:
             self.on_plan_mode(False, plan_file or None)

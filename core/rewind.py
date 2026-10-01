@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Callable, List, Optional, Tuple
 
 
@@ -416,3 +417,31 @@ class RewindService:
             on_turns(turns)
 
         return bool(self.send("rewind_points", {}, on_points))
+
+
+_SLUG_RE = re.compile(r'"slug"\s*:\s*"([A-Za-z0-9_-]+)"')
+
+
+def plan_file_from_transcript(jsonl_path, config_dir=None):
+    # type: (Optional[str], Optional[str]) -> str
+    """Claude Code's plan file for a conversation, or "".
+
+    The CLI writes plan mode's document to `<config>/plans/<slug>.md` and
+    records the slug on the transcript's entries; the last one wins. Read
+    from the tail: transcripts run to hundreds of megabytes.
+    """
+    if not jsonl_path:
+        return ""
+    try:
+        size = os.path.getsize(jsonl_path)
+        with open(jsonl_path, "rb") as f:
+            f.seek(max(0, size - 2 * 1024 * 1024))
+            tail = f.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+    found = _SLUG_RE.findall(tail)
+    if not found:
+        return ""
+    base = config_dir or os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    path = os.path.join(base, "plans", found[-1] + ".md")
+    return path if os.path.isfile(path) else ""

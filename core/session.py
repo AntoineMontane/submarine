@@ -34,7 +34,7 @@ from .records import (
 )
 from .registry import SessionRegistry, default_registry, merge_subsession_queue, agent_id_for, new_agent_id, resolve_init_model
 from .agent_ids import canon_agent_id, canon_agent_ids
-from .rewind import RewindService, is_synthetic_turn
+from .rewind import RewindService, is_synthetic_turn, plan_file_from_transcript
 from .turn import (
     _SELF_WAKE_BACKENDS,
     TurnController,
@@ -447,6 +447,7 @@ class Session:
             on_error=self._mark_error_halt,
             on_loop=self._accept_loop,
             on_plan_mode=self._accept_plan_mode,
+            resolve_plan_file=self._resolve_plan_file,
             on_compact_start=self._enter_compact_ui,
             on_compact_done=self._finish_compact,
             on_resume_stream=self._resume_interrupt_stream,
@@ -3071,6 +3072,21 @@ class Session:
         # before Y/N. Approving/rejecting must not open it again.
         if not on:
             self._reveal_plan_file(plan_file or self.plan_file)
+
+    def _resolve_plan_file(self):
+        # type: () -> str
+        """The plan file when the request names none: the CLI keeps one per
+        conversation, `<config>/plans/<slug>.md`, and the transcript records
+        the slug. Else the last plan file this session saw."""
+        path = ""
+        try:
+            path = plan_file_from_transcript(self._find_jsonl_path())
+        except Exception:
+            path = ""
+        if path:
+            return path
+        pf = self.plan_file or ""
+        return pf if pf and os.path.isfile(pf) else ""
 
     def _reveal_plan_file(self, path):
         # type: (Optional[str]) -> None
