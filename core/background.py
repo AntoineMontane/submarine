@@ -48,7 +48,8 @@ SHELL_BG = (
     "Bash", "Shell", "execute", "run_terminal_command", "Workflow",
 )
 SUBAGENT_BG = (
-    "Task", "Subagent",
+    # Claude Code names its subagent tool `Agent` (was `Task`).
+    "Agent", "Task", "Subagent",
 )
 
 # Claude Code's background-bash launch ack (Bash tool_result). The SDK's later
@@ -60,6 +61,17 @@ _CC_BG_ACK_RE = re.compile(r"running in background with ID:\s*([A-Za-z0-9_-]+)",
                            re.I)
 _CC_BG_LOG_RE = re.compile(
     r"output is being written to:\s*(\S+)", re.I)
+# Its subagent launch ack (Agent tool_result). The CLI backgrounds an agent
+# on its own — no `run_in_background` in the call — so this reply is the
+# first the host hears that the agent is still running after the turn:
+#   "Async agent launched successfully. … agentId: ae50470261a346817 …
+#    output_file: /…/tasks/ae50470261a346817.output"
+_CC_AGENT_ACK_RE = re.compile(r"async agent launched successfully", re.I)
+# No \b: in the str() of a content-block list a newline is the two
+# characters `\n`, so `agentId` follows an `n`. The path stops at a
+# backslash or quote for the same reason.
+_CC_AGENT_ID_RE = re.compile(r"agentId:\s*([A-Za-z0-9_-]+)")
+_CC_AGENT_LOG_RE = re.compile(r"output_file:\s*([^\s'\"\\]+)")
 
 POLL_BUSY_MS = 5000
 POLL_IDLE_MS = 8000
@@ -192,13 +204,23 @@ class BackgroundTaskGate:
         """
         text = content if isinstance(content, str) else str(content or "")
         match = _CC_BG_ACK_RE.search(text)
+        log_re = _CC_BG_LOG_RE
+        if match is None and _CC_AGENT_ACK_RE.search(text):
+            match = _CC_AGENT_ID_RE.search(text)
+            log_re = _CC_AGENT_LOG_RE
+            if match is None:
+                # An agent ack without its id: still running, still ours.
+                if tool_use_id:
+                    self.bg_task_ids.add(tool_use_id)
+                    self.schedule_poll()
+                return True
         if match is None:
             return False
         task_id = match.group(1)
         if tool_use_id:
             self.task_tool_map[task_id] = tool_use_id
             self.bg_task_ids.add(tool_use_id)
-        log = _CC_BG_LOG_RE.search(text)
+        log = log_re.search(text)
         if log is not None:
             self.task_logs[task_id] = log.group(1).rstrip(".,")
         self.foreground_tasks.discard(task_id)
@@ -529,6 +551,14 @@ def _read_file(path):
             return f.read()
     except Exception:
         return ""
+
+
+def is_agent_launch_ack(content):
+    # type: (Any) -> bool
+    """The reply opens with Claude Code's async-agent ack (not a report that
+    merely quotes it). Content may be the str() of a content-block list."""
+    head = str(content or "")[:120]
+    return bool(_CC_AGENT_ACK_RE.search(head))
 
 
 def is_shell_background_tool(name):

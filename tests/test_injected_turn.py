@@ -172,6 +172,48 @@ class NoHostNotificationTurnTest(unittest.TestCase):
         self.assertFalse(s.working)
         self.assertIn(True, s.chrome.unread)
 
+    def test_an_agent_the_cli_backgrounds_keeps_a_running_row(self):
+        """Claude Code runs an Agent async on its own — no run_in_background
+        in the call. Its reply is a launch ack; the row stays ⚙ after the
+        turn, so the session shows work in progress, until the completion."""
+        client = FakeClient()
+        s = make_session(initialized=True, client=client, backend="claude")
+        s.query("survey it")
+        s.events.tool_use({"name": "Agent", "id": "tool-a", "background": False,
+                           "input": {"description": "Material block survey",
+                                     "subagent_type": "Explore"}})
+        s.events.system({"subtype": "task_started", "data": {
+            "task_id": "ae504", "tool_use_id": "tool-a", "is_backgrounded": True,
+            "task_type": "local_agent", "description": "Material block survey"}})
+        s.events.tool_result({"tool_use_id": "tool-a", "content": str([{
+            "type": "text",
+            "text": "Async agent launched successfully. (internal metadata)\n"
+                    "agentId: ae504 (internal ID)\nThe agent is working in the "
+                    "background.\noutput_file: /nonexistent/ae504.output\n"}])})
+        _m, _p, cb = [c for c in client.sent if c[0] == "query"][-1]
+        cb({"status": "complete"})
+        self.assertFalse(s.working)
+        self.assertEqual(s.output.find_tool_by_id("tool-a").status, "background")
+        self.assertTrue(s.bg.has_background())
+        self.assertEqual(s.bg.task_logs.get("ae504"), "/nonexistent/ae504.output")
+        s.events.system({"subtype": "task_notification", "data": {
+            "task_id": "ae504", "tool_use_id": "tool-a", "status": "completed",
+            "summary": "Material block survey",
+            "output_file": "/nonexistent/ae504.output"}})
+        s.scheduler.fire_all()
+        self.assertEqual(s.output.find_tool_by_id("tool-a").status, "done")
+        self.assertFalse(s.bg.has_background())
+
+    def test_a_bash_whose_output_quotes_the_ack_is_just_done(self):
+        client = FakeClient()
+        s = make_session(initialized=True, client=client, backend="claude")
+        s.query("grep it")
+        s.events.tool_use({"name": "Bash", "id": "tool-g", "background": False,
+                           "input": {"command": "grep -rn ack ."}})
+        s.events.tool_result({"tool_use_id": "tool-g", "content":
+            "core/background.py:57: Command running in background with ID: x1."})
+        self.assertEqual(s.output.find_tool_by_id("tool-g").status, "done")
+
     def test_the_session_has_no_notification_query_path(self):
         s = make_session(initialized=True, client=FakeClient(), backend="claude")
         for name in ("_bg_query", "_judge_notification_turn", "_fire_queued_first"):

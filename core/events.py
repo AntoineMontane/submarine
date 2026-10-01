@@ -10,7 +10,7 @@ import re
 
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
-from .background import is_shell_background_tool
+from .background import SUBAGENT_BG, is_agent_launch_ack, is_shell_background_tool
 from .turn import (
     _SELF_WAKE_BACKENDS,
     looks_like_compact_done,
@@ -698,6 +698,27 @@ class BridgeEventRouter:
             ):
                 return
             self.bg.finalize_tool(tool_use_id, keep=not is_error)
+            return
+        if (not is_error and matched is not None
+                and str(tool_name) in SUBAGENT_BG
+                and is_agent_launch_ack(content)
+                and self.bg.note_launch_ack(tool_use_id, content or "")):
+            # Launched into the background by the CLI itself (an Agent it
+            # chose to run async): the reply is an ack, not the result. The
+            # row turns ⚙ and stays until the task's completion — marking it
+            # done left the session looking idle while its agents worked.
+            try:
+                self.output.tool(tool_name, getattr(matched, "tool_input", None),
+                                 tool_id=tool_use_id, background=True)
+                self.bg.register_tool(tool_use_id, tool=matched)
+                if self.output.is_input_mode():
+                    self.output.refresh_background_hints()
+            except Exception:
+                pass
+            if tool_name == self.current_tool:
+                self.current_tool = None
+                if self.on_tool_name is not None:
+                    self.on_tool_name(None)
             return
         if is_error:
             self.output.tool_error(tool_name, content, tool_id=tool_use_id)
