@@ -1246,17 +1246,21 @@ class MCPSocketServer:
             "spawned": True,
             "name": name or "(unnamed)",
             "agent_id": agent_id,
-            "subsession_id": subsession_id,
             "parent_agent_id": parent_agent_id,
-            "parent_session_id": parent_session_id,
             "backend": backend,
             "model": spawn_model or getattr(session, "model", None),
-            "fork": fork,
-            "profile": profile,
         }
+        # Only what tells the caller something: agents address sessions by
+        # agent_id, so the backend session ids (parent_session_id, the
+        # subsession_id alias) and unset options were noise in every row.
+        if profile:
+            out["profile"] = profile
+        if fork:
+            out["fork"] = True
         if fork_from_agent_id:
             out["forked_from_agent_id"] = fork_from_agent_id
-            out["forked_from_backend"] = fork_source_backend
+            if fork_source_backend and fork_source_backend != backend:
+                out["forked_from_backend"] = fork_source_backend
         return out
 
     @staticmethod
@@ -1467,14 +1471,10 @@ class MCPSocketServer:
                 "working": bool(session.working),
                 "sleeping": sleeping,
                 "turn_phase": phase,
-                "subsession_id": getattr(session, "subsession_id", None) or aid,
                 "parent_agent_id": getattr(session, "parent_agent_id", None),
                 "backend": getattr(session, "backend", None),
                 "forkable": bool(getattr(session, "session_id", None)),
                 "context_budget": budget,
-                "context_summary": budget.get("summary"),
-                "context_pct": budget.get("context_pct"),
-                "headroom": budget.get("headroom"),
             })
         if not lines:
             if caller is None and not parent_agent_id:
@@ -1613,9 +1613,6 @@ class MCPSocketServer:
             "line_count": content.count("\n") + 1 if content else 0,
             "truncated": truncated,
             "context_budget": budget,
-            "context_summary": budget.get("summary"),
-            "context_pct": budget.get("context_pct"),
-            "headroom": budget.get("headroom"),
         }
 
     def _caller_or_active_session(self):
@@ -2131,7 +2128,6 @@ class MCPSocketServer:
         return {
             "agent_id": agent_id,
             "parent_agent_id": parent_agent_id,
-            "subsession_id": subsession_id or agent_id,
             "is_subsession": bool(parent_agent_id or subsession_id),
             "name": session.name or "(unnamed)",
             "backend": getattr(session, "backend", None) or "claude",
@@ -2141,9 +2137,6 @@ class MCPSocketServer:
             "turn_phase": getattr(session, "turn_phase", None),
             "session_id": getattr(session, "session_id", None),
             "context_budget": budget,
-            "context_summary": budget.get("summary"),
-            "context_pct": budget.get("context_pct"),
-            "headroom": budget.get("headroom"),
         }
 
     def _wait_for_subsession(
@@ -2177,10 +2170,8 @@ class MCPSocketServer:
             })
         return {
             "status": "registered",
-            "notification_id": wait_id,
             "wait_id": wait_id,
             "agent_id": child_id,
-            "subsession_id": child_id,
             "parent_agent_id": getattr(parent, "agent_id", None),
             "host_local": True,
         }
@@ -2384,14 +2375,11 @@ class MCPSocketServer:
                 "(signal_complete ran while you were still working)."
                 if child_busy else "Parent notified when free."
             ),
-            "subsession_id": subsession_id,
+            "agent_id": subsession_id,
             # The parent this reaches — its current id, not a stale link.
             "parent_agent_id": getattr(parent_session, "agent_id", None) or parent_agent_id,
             "result_summary": result_summary,
             "context_budget": budget,
-            "context_summary": budget_line,
-            "context_pct": budget.get("context_pct"),
-            "headroom": budget.get("headroom"),
         }
 
     # ─── LSP ──────────────────────────────────────────────────────────────
