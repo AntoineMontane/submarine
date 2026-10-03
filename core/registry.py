@@ -113,7 +113,9 @@ def stamp_sender_prompt(
         return "[from user]\n%s" % body
     aid = (sender_agent_id or "").strip()
     sid = (sender_session_id or "").strip()
-    name = (sender_name or "").strip()
+    # Auto-named sessions are named after their first prompt: unclipped, every
+    # message repeated the sender's whole task.
+    name = _clip_label(" ".join((sender_name or "").split()), 48)
     header = "[from agent %s]" % aid if aid else "[from agent]"
     extra = []
     if sid and sid != aid:

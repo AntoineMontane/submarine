@@ -68,7 +68,13 @@ def display_prompt(raw: str) -> str:
         return ""
     m = _USER_QUERY.search(text)
     if m:
-        return m.group(1).strip()
+        text = m.group(1).strip()
+    if text.startswith(("[from agent", "[from user]")):
+        # A send_to_session message: the transcript keeps its routing header,
+        # the live sheet showed `📬 from <sender>: …`. Raw on resume, it read
+        # as the sender's whole task pasted onto this sheet.
+        from core.registry import sender_display_prompt
+        return sender_display_prompt(text)
     if is_synthetic_turn(text):
         return synthetic_label(text)
     return text
