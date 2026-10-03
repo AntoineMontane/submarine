@@ -1102,6 +1102,14 @@ class MCPSocketServer:
             if not sid:
                 return {"error": "Cannot fork: %s has no session_id yet (still starting?)" % label}
             src_backend = getattr(source_session, "backend", None) or "claude"
+            if src_backend == "pi":
+                # Pi runs --no-session: there is no saved conversation to
+                # copy, and resuming its placeholder id gave an empty child.
+                return {
+                    "error": "Cannot fork a pi session: pi keeps no saved history",
+                    "hint": "Write the shared context to an artifact and pass "
+                            "it in the prompt, or base the workers on another backend",
+                }
             fork_source_model = getattr(source_session, "model", None)
             if not backend:
                 backend = src_backend
