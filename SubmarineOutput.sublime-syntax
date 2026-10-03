@@ -27,6 +27,13 @@ contexts:
     - match: '^\s*⚠ @error\(.*\)$'
       scope: submarine.tool.error
 
+    # A background task still running after its turn's @done (the hint
+    # under the last turn): the turn's context has ended by then, so the
+    # ⚙ row rule there never applied. Indented, unlike a runtime turn's
+    # `⚙ … ▷` header at column 0.
+    - match: '^\s+⚙ .+$'
+      scope: submarine.tool.background
+
     # A turn the runtime started (a background task finished, a wake):
     # `⚙ label ▷` at column 0 — not a prompt, so not the prompt style. Tool
     # rows are indented, so they never match here. Same fold marker as ◎.
