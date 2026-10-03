@@ -20,6 +20,11 @@ if _BRIDGE_DIR not in sys.path:
 from rpc_helpers import process_cwd, send_error, send_notification, send_result  # noqa: E402
 
 
+
+# set_mode / set_model are answered in well under a second; one that hangs
+# must not hold the session at "starting" with no way out.
+SETUP_CALL_TIMEOUT = 30.0
+
 class SessionMixin:
     def permission_mode_to_agent_mode(self, permission_mode: Optional[str]) -> str:
         if not permission_mode:
@@ -65,7 +70,8 @@ class SessionMixin:
             # still goes out.
             return True
         try:
-            result = await self._send_acp("session/set_model", params) or {}
+            result = await self._send_acp(
+                "session/set_model", params, timeout=SETUP_CALL_TIMEOUT) or {}
             # Grok: {_meta: {model: {Ok: id}}} ; others may return currentModelId
             current = result.get("currentModelId")
             if not current:
@@ -137,10 +143,12 @@ class SessionMixin:
                 f"advertised={advertised}")
             return
         try:
+            # Bounded: an agent that never answers (a Grok fork that was not
+            # open) left the session "starting" forever.
             await self._send_acp("session/set_mode", {
                 "sessionId": self.session_id,
                 "modeId": mode_id,
-            })
+            }, timeout=SETUP_CALL_TIMEOUT)
             self.agent_mode = mode_id
         except Exception as e:
             self.log(f"session/set_mode({mode_id}) failed: {e}")
@@ -479,9 +487,14 @@ class SessionMixin:
 
     async def _try_fork_session(self, source_id: str,
                                  mcp_servers: list) -> bool:
-        """ACP session/fork, then Grok `_x.ai/session/fork`. Never session/load.
+        """ACP session/fork, then Grok `_x.ai/session/fork`. Never loads the
+        source id (that would continue it, not fork it). Empty session/new
+        is last resort.
 
-        Load would reuse the source id. Empty session/new is last resort.
+        Grok's `_x.ai/session/fork` only copies the conversation to a new id
+        on disk; the agent process does not have it open, and every call on
+        it (set_mode first) went unanswered — the fork never finished
+        starting. The new id is loaded before use.
         """
         if not source_id:
             return False
@@ -498,8 +511,13 @@ class SessionMixin:
                 self.file_log(
                     f"{method} no new sessionId: {str(result)[:300]}")
                 continue
-            self.session_id = sid
-            self._ingest_session_result(result)
+            if method != "session/fork":
+                if not await self._try_load_session(sid, mcp_servers):
+                    self.file_log(f"{method}: could not open the fork {sid}")
+                    continue
+            else:
+                self.session_id = sid
+                self._ingest_session_result(result)
             self._resumed = False
             self.log(f"{method} ok: {source_id} → {sid}")
             return True

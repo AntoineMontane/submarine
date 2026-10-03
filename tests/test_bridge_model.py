@@ -33,7 +33,7 @@ class GrokModelTest(unittest.TestCase):
         b.file_log = lambda *a, **k: None
         b.log = lambda *a, **k: None
 
-        async def send_acp(method, params):
+        async def send_acp(method, params, **_kw):
             b.sent.append((method, params))
             if reject:
                 raise RuntimeError("Invalid params: unknown model id")

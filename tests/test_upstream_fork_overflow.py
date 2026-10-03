@@ -80,15 +80,29 @@ class TestTryForkSession(unittest.TestCase):
                 raise RuntimeError("Method not found")
             if method == "_x.ai/session/fork":
                 return {"sessionId": "forked-9"}
+            if method == "session/load":
+                return {"sessionId": params["sessionId"]}
             raise RuntimeError("nope")
 
         b = self._bridge(_send)
         self.assertTrue(asyncio.run(b._try_fork_session("src-1", [])))
         self.assertEqual(b.session_id, "forked-9")
-        self.assertEqual([c[0] for c in calls][:2],
-                         ["session/fork", "_x.ai/session/fork"])
+        self.assertEqual([c[0] for c in calls],
+                         ["session/fork", "_x.ai/session/fork", "session/load"])
         self.assertEqual(calls[0][1]["sessionId"], "src-1")
         self.assertEqual(calls[1][1]["sourceSessionId"], "src-1")
+        # Grok's fork only copies to disk: the new id is opened, never the source.
+        self.assertEqual(calls[2][1]["sessionId"], "forked-9")
+        self.assertFalse(b._resumed, "a fork is not a resume")
+
+    def test_a_fork_that_cannot_be_opened_is_not_used(self):
+        async def _send(method, params, timeout=None):
+            if method == "_x.ai/session/fork":
+                return {"newSessionId": "forked-9"}
+            raise RuntimeError("Method not found")
+
+        b = self._bridge(_send)
+        self.assertFalse(asyncio.run(b._try_fork_session("src-1", [])))
 
     def test_never_uses_session_load(self):
         calls = []
@@ -99,7 +113,7 @@ class TestTryForkSession(unittest.TestCase):
 
         b = self._bridge(_send)
         self.assertFalse(asyncio.run(b._try_fork_session("src-1", [])))
-        self.assertNotIn("session/load", calls)
+        self.assertNotIn("session/load", calls)   # the source is never loaded
 
     def test_rejects_a_result_that_reuses_the_source(self):
         async def _send(method, params, timeout=None):

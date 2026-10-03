@@ -25,7 +25,7 @@ class AcpEffortTest(unittest.TestCase):
         b.effort = ""
         b.sent = []
 
-        async def send_acp(method, params):
+        async def send_acp(method, params, **_kw):
             b.sent.append((method, params))
             return {}
         b._send_acp = send_acp
