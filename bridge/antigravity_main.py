@@ -174,6 +174,24 @@ class AntigravityBridge(HttpMcpMixin, AcpBridge):
         self.file_log(f"ask_user free text {label!r} → follow-up prompt")
         return {"outcome": {"outcome": "cancelled"}}
 
+    async def _try_fork_session(self, source_id: str, mcp_servers: list) -> bool:
+        """The server answers session/fork with `{}` (no new id), so the shared
+        path opened an empty session: the fork lost its history. Copy the
+        conversation to a new id and load that; the source is untouched."""
+        if not source_id:
+            return False
+        try:
+            new_id = ag.fork_conversation(source_id)
+        except Exception as e:
+            self.file_log(f"fork copy of {source_id} failed: {e}")
+            return False
+        if not await self._try_load_session(new_id, mcp_servers):
+            self.file_log(f"fork {new_id} would not load")
+            return False
+        self._resumed = False
+        self.log(f"fork ok: {source_id} → {new_id}")
+        return True
+
     def normalize_model(self, model: Optional[str]) -> str:
         return ag.normalize_model(model, default=self.DEFAULT_MODEL)
 

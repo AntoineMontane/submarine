@@ -130,3 +130,67 @@ def normalize_model(model: Optional[str], default: str = "") -> str:
     if not key or key == "default":
         return default
     return key
+
+
+def conversations_dir(gemini_home: Optional[str] = None) -> str:
+    home = gemini_home or os.environ.get("GEMINI_HOME") or os.path.join(
+        os.path.expanduser("~"), ".gemini")
+    return os.path.join(home, "antigravity-acp", "conversations")
+
+
+def fork_conversation(source_id: str, gemini_home: Optional[str] = None) -> str:
+    """Copy a conversation to a new session id; returns the new id.
+
+    antigravity-acp answers session/fork with an empty result, so a fork is
+    made the way Grok's `_x.ai/session/fork` makes one: a copy on disk,
+    then session/load. Each conversation is `<id>.db` (SQLite) + `<id>.meta`
+    (its cwd); the id is also written inside, as a 36-char UUID string in
+    trajectory_meta and in protobuf blobs. Swapping it for another UUID
+    keeps every length, so the blobs stay valid. The backup API takes a
+    consistent snapshot even while the source is in use.
+    """
+    import sqlite3
+    import uuid
+    base = conversations_dir(gemini_home)
+    src_db = os.path.join(base, source_id + ".db")
+    if not os.path.isfile(src_db):
+        raise FileNotFoundError(src_db)
+    new_id = str(uuid.uuid4())
+    dst_db = os.path.join(base, new_id + ".db")
+    src = sqlite3.connect("file:%s?mode=ro" % src_db, uri=True)
+    dst = sqlite3.connect(dst_db)
+    try:
+        src.backup(dst)
+        old_b, new_b = source_id.encode(), new_id.encode()
+        tables = [r[0] for r in dst.execute(
+            "select name from sqlite_master where type='table'")]
+        for table in tables:
+            cols = [r[1] for r in dst.execute("pragma table_info(`%s`)" % table)]
+            for row in dst.execute("select rowid, * from `%s`" % table).fetchall():
+                upd = {}
+                for col, val in zip(cols, row[1:]):
+                    if isinstance(val, bytes) and old_b in val:
+                        upd[col] = val.replace(old_b, new_b)
+                    elif isinstance(val, str) and source_id in val:
+                        upd[col] = val.replace(source_id, new_id)
+                if upd:
+                    dst.execute(
+                        "update `%s` set %s where rowid=?" % (
+                            table, ", ".join("`%s`=?" % c for c in upd)),
+                        (*upd.values(), row[0]))
+        dst.commit()
+    except Exception:
+        dst.close()
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                os.remove(dst_db + suffix)
+            except OSError:
+                pass
+        raise
+    finally:
+        src.close()
+    dst.close()
+    meta = os.path.join(base, source_id + ".meta")
+    if os.path.isfile(meta):
+        shutil.copyfile(meta, os.path.join(base, new_id + ".meta"))
+    return new_id

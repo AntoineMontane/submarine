@@ -227,3 +227,57 @@ class ApplyModelSkipTest(unittest.TestCase):
         b.model = "gemini-3.8-flash-low"
         asyncio.run(b.apply_model())
         self.assertEqual(sent, [("session/set_model", "gemini-3.8-flash-low")])
+
+
+class AntigravityForkTest(unittest.TestCase):
+    """Fork = copy the conversation db under a new id (the server's
+    session/fork returns {}), ids swapped inside, then load the copy."""
+
+    def test_copy_swaps_the_id_everywhere_and_keeps_the_source(self):
+        import sqlite3
+        import tempfile
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from backend import antigravity as ag
+        home = tempfile.mkdtemp(prefix="agy-home-")
+        base = ag.conversations_dir(home)
+        os.makedirs(base)
+        src = "11111111-2222-3333-4444-555555555555"
+        db = sqlite3.connect(os.path.join(base, src + ".db"))
+        db.execute("create table trajectory_meta (trajectory_id text, cascade_id text)")
+        db.execute("create table steps (idx integer primary key, step_payload blob)")
+        db.execute("insert into trajectory_meta values (?, ?)", (src, src))
+        db.execute("insert into steps values (0, ?)", (b"\x0a\x24" + src.encode() + b"\x12\x02hi",))
+        db.commit(); db.close()
+        with open(os.path.join(base, src + ".meta"), "w") as f:
+            f.write('{"cwd": "/w"}')
+        new = ag.fork_conversation(src, gemini_home=home)
+        self.assertNotEqual(new, src)
+        c = sqlite3.connect(os.path.join(base, new + ".db"))
+        self.assertEqual(c.execute("select trajectory_id, cascade_id from trajectory_meta").fetchone(), (new, new))
+        payload = c.execute("select step_payload from steps").fetchone()[0]
+        self.assertEqual(payload, b"\x0a\x24" + new.encode() + b"\x12\x02hi")   # same length
+        c.close()
+        s = sqlite3.connect(os.path.join(base, src + ".db"))
+        self.assertEqual(s.execute("select trajectory_id from trajectory_meta").fetchone()[0], src)
+        self.assertTrue(os.path.isfile(os.path.join(base, new + ".meta")))
+
+    def test_bridge_loads_the_copy_not_the_source(self):
+        import asyncio
+        b = AntigravityBridgeTest._bridge(self)
+        import antigravity_main
+        loaded = []
+
+        async def load(sid, mcp):
+            loaded.append(sid)
+            return True
+        b._try_load_session = load
+        orig = antigravity_main.ag.fork_conversation
+        antigravity_main.ag.fork_conversation = lambda s: "new-id"
+        try:
+            self.assertTrue(asyncio.run(b._try_fork_session("src-id", [])))
+        finally:
+            antigravity_main.ag.fork_conversation = orig
+        self.assertEqual(loaded, ["new-id"])
+        self.assertFalse(b._resumed)
