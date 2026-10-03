@@ -399,6 +399,42 @@ class BannerWithContextTest(unittest.TestCase):
     def test_banner_and_context_line_with_the_composer_open(self):
         self._check(composer_open=True)
 
+    def _first_prompt(self, composer_open, banner_first):
+        from tests.stubs import install_sublime
+        from tests.test_composer_always_back import _live
+        from tests.test_single_view import RecordingWindow
+        from ui.host import HostView
+        install_sublime()
+        win = RecordingWindow()
+        s, out, _c = _live(win, "fresh")
+        HostView.for_window(win).attach(win, s)
+        c = out.composer
+        if composer_open:
+            s._enter_input_with_draft()
+        elif c.is_input_mode():
+            c.exit_input_mode(keep_text=False)
+        if banner_first:
+            out.set_banner(("Claude", "opus", "high"))
+            c.set_pending_context([{"name": "a.py"}])
+        else:
+            c.set_pending_context([{"name": "a.py"}])
+            out.set_banner(("Claude", "opus", "high"))
+        out.prompt("learn about pix", context_names=["a.py"])
+        text = out.view.substr(None)
+        self.assertTrue(text.startswith("  @session(opus, effort:high)\n\n◎ learn about pix ▶\n"),
+                        repr(text))
+        a, _b = out.renderer.current.region
+        self.assertEqual(text[a:a + 2], "◎ ", "the turn region follows the healed banner")
+
+    def test_the_first_prompt_keeps_the_banner_line_apart(self):
+        """Stripping the 📎 line trimmed trailing blank lines into the banner:
+        the prompt landed on (or right under) `@session(…)`, and the syntax
+        lost the ◎ row and everything after it."""
+        for composer_open in (False, True):
+            for banner_first in (False, True):
+                with self.subTest(composer_open=composer_open, banner_first=banner_first):
+                    self._first_prompt(composer_open, banner_first)
+
 
 class EffortOnResumeTest(unittest.TestCase):
     """Effort is a process option, not transcript state: a woken Claude

@@ -383,7 +383,10 @@ class TurnRenderer:
         self.owner.sheet.update_title()
 
         view = self.owner.view
+        healed = self._heal_banner()
         if promoted is not None:
+            if healed:
+                promoted = (promoted[0] + healed, promoted[1] + healed)
             self.current.region = promoted
             if view:
                 self.owner.sheet.set_hidden_region(
@@ -1152,6 +1155,43 @@ class TurnRenderer:
         """Offset where history starts: 0, or just past the banner (the
         first turn there needs no blank line of its own)."""
         return len(self._banner_block())
+
+    def _heal_banner(self):
+        """Put back blank lines trimmed off the end of the banner. Returns
+        how many characters were inserted (everything below moved by that).
+
+        Trimming trailing blank lines (reset_input_mode stripping the 📎
+        line, a draft promoted to the prompt) reached into `@session(…)\n\n`:
+        the first prompt was written on, or right under, the banner line,
+        and the syntax lost the ◎ row and everything after it.
+        """
+        block = self._banner_block()
+        view = self.owner.view
+        if not block or not self._has_view():
+            return 0
+        try:
+            head = view.substr(_R(0, min(len(block), view.size())))
+        except Exception:
+            return 0
+        if head == block:
+            return 0
+        line = block.rstrip("\n")
+        if not head.startswith(line):
+            return 0                    # not our banner: leave it alone
+        k = len(line)
+        while k < len(head) and head[k] == "\n":
+            k += 1
+        missing = block[k:]
+        if not missing or missing.strip():
+            return 0
+        delta = len(missing)
+        self._shift_below_banner(delta)
+        self.owner._replace(k, k, missing)
+        for conv in list(self.conversations) + ([self.current] if self.current else []):
+            if conv is not None and conv.region:
+                a, b = conv.region
+                conv.region = (a + delta, b + delta)
+        return delta
 
     def _shift_below_banner(self, delta):
         """Everything below the banner moves with it: composer anchors, the
